@@ -1,4 +1,5 @@
 # Contributing
+
 ## Before You Start
 
 You must install and run the ArgoCD using a local Kubernetes (e.g. Docker for Desktop or Minikube) first. This will help you understand the application, but also get your local environment set-up.
@@ -11,22 +12,17 @@ Install:
 
 * [docker](https://docs.docker.com/install/#supported-platforms)
 * [golang](https://golang.org/)
-* [dep](https://github.com/golang/dep)
-* [protobuf](https://developers.google.com/protocol-buffers/)
 * [ksonnet](https://github.com/ksonnet/ksonnet#install)
 * [helm](https://github.com/helm/helm/releases)
 * [kustomize](https://github.com/kubernetes-sigs/kustomize/releases)
-* [go-swagger](https://github.com/go-swagger/go-swagger/blob/master/docs/install.md)
-* [jq](https://stedolan.github.io/jq/)
 * [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
 * [kubectx](https://kubectx.dev)
 * [minikube](https://kubernetes.io/docs/setup/minikube/) or Docker for Desktop
 
 Brew users can quickly install the lot:
-    
+
 ```bash
-brew tap go-swagger/go-swagger
-brew install go dep protobuf kubectl kubectx ksonnet/tap/ks kubernetes-helm jq go-swagger kustomize 
+brew install go kubectl kubectx ksonnet/tap/ks kubernetes-helm kustomize
 ```
 
 !!! note "Kustomize"
@@ -43,21 +39,14 @@ Checkout the code:
 
 ```bash
 go get -u github.com/argoproj/argo-cd
-cd ~/go/src/github.com/argoproj/argo-cd
+cd $GOPATH/src/github.com/argoproj/argo-cd
 ```
 
 Install go dependencies:
 
 ```bash
-go get github.com/gobuffalo/packr/packr
-go get github.com/gogo/protobuf/gogoproto
-go get github.com/golang/protobuf/protoc-gen-go
-go get github.com/golangci/golangci-lint/cmd/golangci-lint
-go get github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway
-go get github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger
 go get github.com/jstemmer/go-junit-report
 go get github.com/mattn/goreman
-go get golang.org/x/tools/cmd/goimports
 ```
 
 ## Building
@@ -100,7 +89,7 @@ kubectl -n argocd scale deployment.extensions/argocd-redis --replicas 0
 Then checkout and build the UI next to your code
 
 ```
-cd ~/go/src/github.com/argoproj
+cd $GOPATH/src/github.com/argoproj
 git clone git@github.com:argoproj/argo-cd-ui.git
 ```
 
@@ -111,7 +100,7 @@ Note: you'll need to use the https://localhost:6443 cluster now.
 Then start the services:
 
 ```bash
-cd ~/go/src/github.com/argoproj/argo-cd
+cd $GOPATH/src/github.com/argoproj/argo-cd
 make start
 ```
 

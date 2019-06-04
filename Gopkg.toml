@@ -1,7 +1,8 @@
-# Packages should only be added to the following list when we use them *outside* of our go code.
-# (e.g. we want to build the binary to invoke as part of the build process, such as in
-# generate-proto.sh). Normal use of golang packages should be added via `dep ensure`, and pinned
-# with a [[constraint]] or [[override]] when version is important.
+# Packages should only be added to the following list when we use them *outside*
+# of our go code. (e.g. we want to build the binary to invoke as part of the
+# build process, such as in `make protogen`). Normal use of golang packages
+# should be added via `dep ensure`, and pinned with a [[constraint]] or
+# [[override]] when version is important.
 required = [
   "github.com/golang/protobuf/protoc-gen-go",
   "github.com/gogo/protobuf/protoc-gen-gofast",
@@ -11,6 +12,7 @@ required = [
   "github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway",
   "github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger",
   "golang.org/x/sync/errgroup",
+  "golang.org/x/tools/cmd/goimports",
 ]
 
 [[constraint]]

@@ -1024,14 +1024,25 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:77e1d6ed91936b206979806b0aacbf817ec54b840803d8f8cd7a1de5bfbf92a4"
+  digest = "1:84dfe81232c9cf95a6f125b60ab0d853f37cc7b86d627313c7f86611b549ece4"
   name = "golang.org/x/tools"
   packages = [
+    "cmd/goimports",
     "go/ast/astutil",
+    "go/gcexportdata",
+    "go/internal/gcimporter",
+    "go/internal/packagesdriver",
+    "go/packages",
+    "go/types/typeutil",
     "imports",
+    "internal/fastwalk",
+    "internal/gopathwalk",
+    "internal/imports",
+    "internal/module",
+    "internal/semver",
   ]
   pruneopts = ""
-  revision = "5e776fee60db37e560cee3fb46db699d2f095386"
+  revision = "8aaa1484dc108aa23dcf2d4a09371c0c9e280f6b"
 
 [[projects]]
   digest = "1:934fb8966f303ede63aa405e2c8d7f0a427a05ea8df335dfdc1833dd4d40756f"
@@ -1496,7 +1507,7 @@
   version = "v0.1.0"
 
 [[projects]]
-  digest = "1:6fb17dac788a9f25fc454d8324180779687c46b60686c6e64136183c8134111e"
+  digest = "1:24f929c65b6d2635880acbb8c33fa1143cf82133de91d227a779b7786d7eb07c"
   name = "k8s.io/kube-openapi"
   packages = [
     "cmd/openapi-gen",
@@ -1612,6 +1623,7 @@
     "golang.org/x/oauth2",
     "golang.org/x/sync/errgroup",
     "golang.org/x/sync/semaphore",
+    "golang.org/x/tools/cmd/goimports",
     "google.golang.org/genproto/googleapis/api/annotations",
     "google.golang.org/grpc",
     "google.golang.org/grpc/codes",
