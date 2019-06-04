@@ -64,3 +64,14 @@ func (c *Consequences) resource(name string) ResourceStatus {
 		Health: &HealthStatus{Status: HealthStatusUnknown},
 	}
 }
+
+func (c *Consequences) gvknResource(group, version, kind, name string) ResourceStatus {
+	for _, r := range c.app().Status.Resources {
+		if r.Name == name {
+			return r
+		}
+	}
+	return ResourceStatus{
+		Health: &HealthStatus{Status: HealthStatusUnknown},
+	}
+}

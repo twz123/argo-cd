@@ -104,7 +104,7 @@ release-cli: clean-debug image
 argocd-util: clean-debug
 	# Build argocd-util as a statically linked binary, so it could run within the
 	# alpine-based dex container (argoproj/argo-cd#844)
-	CGO_ENABLED=0 go build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
+	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
 
 .PHONY: manifests
 manifests:
@@ -114,15 +114,15 @@ manifests:
 # and policy.csv files into the go binary
 .PHONY: server
 server: clean-debug | dist/packr
-	CGO_ENABLED=0 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
+	CGO_ENABLED=0 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
 
 .PHONY: repo-server
 repo-server:
-	CGO_ENABLED=0 go build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
+	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
 
 .PHONY: controller
 controller:
-	CGO_ENABLED=0 ${PACKR_CMD} build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
+	CGO_ENABLED=0 ${PACKR_CMD} build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
 
 .PHONY: image
 ifeq ($(DEV_IMAGE), true)
@@ -132,12 +132,12 @@ ifeq ($(DEV_IMAGE), true)
 # .dockerignore.
 image: packr
 	docker build -t argocd-base --target argocd-base .
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd ./cmd/argocd
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-darwin-amd64 ./cmd/argocd
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd ./cmd/argocd
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-darwin-amd64 ./cmd/argocd
 	cp Dockerfile.dev dist
 	docker build -t $(IMAGE_PREFIX)argocd:$(IMAGE_TAG) -f dist/Dockerfile.dev dist
 else
@@ -173,9 +173,9 @@ test-e2e: cli
 
 .PHONY: start-e2e
 start-e2e: cli
-	killall goreman || true
-	kubectl create ns argocd-e2e || true
-	kubens argocd-e2e
+	-killall goreman
+	-kubectl create ns argocd-e2e
+	kubectl config set-context "$(shell kubectl config current-context)" --namespace=argocd-e2e
 	kustomize build test/manifests/base | kubectl apply -f -
 	goreman start
 
@@ -191,8 +191,8 @@ clean: clean-debug
 
 .PHONY: start
 start:
-	killall goreman || true
-	kubens argocd
+	-killall goreman
+	kubectl config set-context "$(shell kubectl config current-context)" --namespace=argocd
 	goreman start
 
 .PHONY: pre-commit

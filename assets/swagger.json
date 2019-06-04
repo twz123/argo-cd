@@ -49,7 +49,7 @@
           "ApplicationService"
         ],
         "summary": "List returns list of applications",
-        "operationId": "ListMixin5",
+        "operationId": "List",
         "parameters": [
           {
             "type": "string",
@@ -89,7 +89,7 @@
           "ApplicationService"
         ],
         "summary": "Create creates an application",
-        "operationId": "CreateMixin5",
+        "operationId": "Create",
         "parameters": [
           {
             "name": "body",
@@ -116,7 +116,7 @@
           "ApplicationService"
         ],
         "summary": "Update updates an application",
-        "operationId": "UpdateMixin5",
+        "operationId": "Update",
         "parameters": [
           {
             "type": "string",
@@ -197,7 +197,7 @@
           "ApplicationService"
         ],
         "summary": "Get returns an application by name",
-        "operationId": "GetMixin5",
+        "operationId": "Get",
         "parameters": [
           {
             "type": "string",
@@ -238,7 +238,7 @@
           "ApplicationService"
         ],
         "summary": "Delete deletes an application",
-        "operationId": "DeleteMixin5",
+        "operationId": "Delete",
         "parameters": [
           {
             "type": "string",
@@ -744,7 +744,7 @@
           "ClusterService"
         ],
         "summary": "List returns list of clusters",
-        "operationId": "List",
+        "operationId": "ListMixin2",
         "parameters": [
           {
             "type": "string",
@@ -766,7 +766,7 @@
           "ClusterService"
         ],
         "summary": "Create creates a cluster",
-        "operationId": "Create",
+        "operationId": "CreateMixin2",
         "parameters": [
           {
             "name": "body",
@@ -820,7 +820,7 @@
           "ClusterService"
         ],
         "summary": "Update updates a cluster",
-        "operationId": "Update",
+        "operationId": "UpdateMixin2",
         "parameters": [
           {
             "type": "string",
@@ -853,7 +853,7 @@
           "ClusterService"
         ],
         "summary": "Get returns a cluster by server address",
-        "operationId": "GetMixin1",
+        "operationId": "GetMixin2",
         "parameters": [
           {
             "type": "string",
@@ -876,7 +876,7 @@
           "ClusterService"
         ],
         "summary": "Delete deletes a cluster",
-        "operationId": "Delete",
+        "operationId": "DeleteMixin2",
         "parameters": [
           {
             "type": "string",
@@ -1133,7 +1133,7 @@
           "RepositoryService"
         ],
         "summary": "List returns list of repos",
-        "operationId": "ListMixin2",
+        "operationId": "ListMixin4",
         "parameters": [
           {
             "type": "string",
@@ -1155,7 +1155,7 @@
           "RepositoryService"
         ],
         "summary": "Create creates a repo",
-        "operationId": "CreateMixin2",
+        "operationId": "CreateMixin4",
         "parameters": [
           {
             "name": "body",
@@ -1182,7 +1182,7 @@
           "RepositoryService"
         ],
         "summary": "Update updates a repo",
-        "operationId": "UpdateMixin2",
+        "operationId": "UpdateMixin4",
         "parameters": [
           {
             "type": "string",
@@ -1215,7 +1215,7 @@
           "RepositoryService"
         ],
         "summary": "Delete deletes a repo",
-        "operationId": "DeleteMixin2",
+        "operationId": "DeleteMixin4",
         "parameters": [
           {
             "type": "string",
@@ -1319,7 +1319,7 @@
           "SessionService"
         ],
         "summary": "Create a new JWT for authentication and set a cookie if using HTTP.",
-        "operationId": "CreateMixin7",
+        "operationId": "CreateMixin5",
         "parameters": [
           {
             "name": "body",
@@ -1344,7 +1344,7 @@
           "SessionService"
         ],
         "summary": "Delete an existing JWT cookie if using HTTP.",
-        "operationId": "DeleteMixin7",
+        "operationId": "DeleteMixin5",
         "responses": {
           "200": {
             "description": "(empty)",
@@ -1361,7 +1361,7 @@
           "SettingsService"
         ],
         "summary": "Get returns Argo CD settings",
-        "operationId": "Get",
+        "operationId": "GetMixin6",
         "responses": {
           "200": {
             "description": "(empty)",
@@ -1785,6 +1785,7 @@
       "type": "object",
       "properties": {
         "destination": {
+          "description": "Destination stores the cluster address that this environment points to.",
           "$ref": "#/definitions/repositoryKsonnetEnvironmentDestination"
         },
         "k8sVersion": {
@@ -1934,15 +1935,19 @@
           "title": "The number of times this event has occurred.\n+optional"
         },
         "eventTime": {
+          "title": "Time when this Event was first observed.\n+optional",
           "$ref": "#/definitions/v1MicroTime"
         },
         "firstTimestamp": {
+          "title": "The time at which the event was first recorded. (Time of server receipt is in TypeMeta.)\n+optional",
           "$ref": "#/definitions/v1Time"
         },
         "involvedObject": {
+          "description": "The object that this event is about.",
           "$ref": "#/definitions/v1ObjectReference"
         },
         "lastTimestamp": {
+          "title": "The time at which the most recent occurrence of this event was recorded.\n+optional",
           "$ref": "#/definitions/v1Time"
         },
         "message": {
@@ -1950,6 +1955,7 @@
           "title": "A human-readable description of the status of this operation.\nTODO: decide on maximum length.\n+optional"
         },
         "metadata": {
+          "title": "Standard object's metadata.\nMore info: https://git.k8s.io/community/contributors/devel/api-conventions.md#metadata",
           "$ref": "#/definitions/v1ObjectMeta"
         },
         "reason": {
@@ -1957,6 +1963,7 @@
           "title": "This should be a short, machine understandable string that gives the reason\nfor the transition into the object's current status.\nTODO: provide exact specification for format.\n+optional"
         },
         "related": {
+          "title": "Optional secondary object for more complex actions.\n+optional",
           "$ref": "#/definitions/v1ObjectReference"
         },
         "reportingComponent": {
@@ -1968,9 +1975,11 @@
           "title": "ID of the controller instance, e.g. `kubelet-xyzf`.\n+optional"
         },
         "series": {
+          "title": "Data about the Event series this event represents or nil if it's a singleton Event.\n+optional",
           "$ref": "#/definitions/v1EventSeries"
         },
         "source": {
+          "title": "The component reporting this event. Should be a short machine understandable string.\n+optional",
           "$ref": "#/definitions/v1EventSource"
         },
         "type": {
@@ -1991,6 +2000,7 @@
           }
         },
         "metadata": {
+          "title": "Standard list metadata.\nMore info: https://git.k8s.io/community/contributors/devel/api-conventions.md#types-kinds\n+optional",
           "$ref": "#/definitions/v1ListMeta"
         }
       }
@@ -2005,6 +2015,7 @@
           "title": "Number of occurrences in this series up to the last heartbeat time"
         },
         "lastObservedTime": {
+          "title": "Time of the last occurrence observed",
           "$ref": "#/definitions/v1MicroTime"
         },
         "state": {
@@ -2062,6 +2073,7 @@
           }
         },
         "result": {
+          "description": "If result is set with the Failure field, the object will be persisted to storage and then deleted,\nensuring that other clients can observe the deletion.",
           "$ref": "#/definitions/v1Status"
         }
       }
@@ -2130,6 +2142,7 @@
           "title": "The name of the cluster which the object belongs to.\nThis is used to distinguish resources with same name and namespace in different clusters.\nThis field is not set anywhere right now and apiserver is going to ignore it if set in create or update request.\n+optional"
         },
         "creationTimestamp": {
+          "description": "CreationTimestamp is a timestamp representing the server time when this object was\ncreated. It is not guaranteed to be set in happens-before order across separate operations.\nClients may not set this value. It is represented in RFC3339 form and is in UTC.\n\nPopulated by the system.\nRead-only.\nNull for lists.\nMore info: https://git.k8s.io/community/contributors/devel/api-conventions.md#metadata\n+optional",
           "$ref": "#/definitions/v1Time"
         },
         "deletionGracePeriodSeconds": {
@@ -2138,6 +2151,7 @@
           "title": "Number of seconds allowed for this object to gracefully terminate before\nit will be removed from the system. Only set when deletionTimestamp is also set.\nMay only be shortened.\nRead-only.\n+optional"
         },
         "deletionTimestamp": {
+          "description": "DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted. This\nfield is set by the server when a graceful deletion is requested by the user, and is not\ndirectly settable by a client. The resource is expected to be deleted (no longer visible\nfrom resource lists, and not reachable by name) after the time in this field, once the\nfinalizers list is empty. As long as the finalizers list contains items, deletion is blocked.\nOnce the deletionTimestamp is set, this value may not be unset or be set further into the\nfuture, although it may be shortened or the resource may be deleted prior to this time.\nFor example, a user may request that a pod is deleted in 30 seconds. The Kubelet will react\nby sending a graceful termination signal to the containers in the pod. After that 30 seconds,\nthe Kubelet will send a hard termination signal (SIGKILL) to the container and after cleanup,\nremove the pod from the API. In the presence of network partitions, this object may still\nexist after this timestamp, until an administrator or automated process can determine the\nresource is fully terminated.\nIf not set, graceful deletion of the object has not been requested.\n\nPopulated by the system when a graceful deletion is requested.\nRead-only.\nMore info: https://git.k8s.io/community/contributors/devel/api-conventions.md#metadata\n+optional",
           "$ref": "#/definitions/v1Time"
         },
         "finalizers": {
@@ -2157,6 +2171,7 @@
           "title": "A sequence number representing a specific generation of the desired state.\nPopulated by the system. Read-only.\n+optional"
         },
         "initializers": {
+          "description": "An initializer is a controller which enforces some system invariant at object creation time.\nThis field is a list of initializers that have not yet acted on this object. If nil or empty,\nthis object has been completely initialized. Otherwise, the object is considered uninitialized\nand is hidden (in list/watch and get calls) from clients that haven't explicitly asked to\nobserve uninitialized objects.\n\nWhen an object is created, the system will populate this list with the current set of initializers.\nOnly privileged users may set or modify this list. Once it is empty, it may not be modified further\nby any user.",
           "$ref": "#/definitions/v1Initializers"
         },
         "labels": {
@@ -2271,6 +2286,7 @@
           "title": "Suggested HTTP return code for this status, 0 if not set.\n+optional"
         },
         "details": {
+          "title": "Extended data associated with the reason.  Each reason may define its\nown extended details. This field is optional and the data returned\nis not guaranteed to conform to any schema except that defined by\nthe reason type.\n+optional",
           "$ref": "#/definitions/v1StatusDetails"
         },
         "message": {
@@ -2278,6 +2294,7 @@
           "title": "A human-readable description of the status of this operation.\n+optional"
         },
         "metadata": {
+          "title": "Standard list metadata.\nMore info: https://git.k8s.io/community/contributors/devel/api-conventions.md#types-kinds\n+optional",
           "$ref": "#/definitions/v1ListMeta"
         },
         "reason": {
@@ -2510,15 +2527,19 @@
       "type": "object",
       "properties": {
         "directory": {
+          "title": "Directory holds path/directory specific options",
           "$ref": "#/definitions/v1alpha1ApplicationSourceDirectory"
         },
         "helm": {
+          "title": "Helm holds helm specific options",
           "$ref": "#/definitions/v1alpha1ApplicationSourceHelm"
         },
         "ksonnet": {
+          "title": "Ksonnet holds ksonnet specific options",
           "$ref": "#/definitions/v1alpha1ApplicationSourceKsonnet"
         },
         "kustomize": {
+          "title": "Kustomize holds kustomize specific options",
           "$ref": "#/definitions/v1alpha1ApplicationSourceKustomize"
         },
         "path": {
@@ -2526,6 +2547,7 @@
           "title": "Path is a directory path within the repository containing a"
         },
         "plugin": {
+          "title": "ConfigManagementPlugin holds config management plugin specific options",
           "$ref": "#/definitions/v1alpha1ApplicationSourcePlugin"
         },
         "repoURL": {
@@ -2611,6 +2633,13 @@
       "type": "object",
       "title": "ApplicationSourceKustomize holds kustomize specific options",
       "properties": {
+        "commonLabels": {
+          "type": "object",
+          "title": "CommonLabels adds additional kustomize commonLabels",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
         "imageTags": {
           "type": "array",
           "title": "ImageTags are kustomize 1.0 image tag overrides",
@@ -2645,6 +2674,7 @@
       "type": "object",
       "properties": {
         "destination": {
+          "title": "Destination overrides the kubernetes server and namespace defined in the environment ksonnet app.yaml",
           "$ref": "#/definitions/v1alpha1ApplicationDestination"
         },
         "ignoreDifferences": {
@@ -2659,9 +2689,11 @@
           "type": "string"
         },
         "source": {
+          "title": "Source is a reference to the location ksonnet application definition",
           "$ref": "#/definitions/v1alpha1ApplicationSource"
         },
         "syncPolicy": {
+          "title": "SyncPolicy controls when a sync will be performed",
           "$ref": "#/definitions/v1alpha1SyncPolicy"
         }
       }
@@ -2747,6 +2779,7 @@
       "type": "object",
       "properties": {
         "application": {
+          "description": "Application is:\n * If Type is Added or Modified: the new state of the object.\n * If Type is Deleted: the state of the object immediately before deletion.\n * If Type is Error: *api.Status is recommended; other types may make sense\n   depending on context.",
           "$ref": "#/definitions/v1alpha1Application"
         },
         "type": {
@@ -2759,9 +2792,11 @@
       "title": "Cluster is the definition of a cluster resource",
       "properties": {
         "config": {
+          "title": "Config holds cluster information for connecting to a cluster",
           "$ref": "#/definitions/v1alpha1ClusterConfig"
         },
         "connectionState": {
+          "title": "ConnectionState contains information about cluster connection state",
           "$ref": "#/definitions/v1alpha1ConnectionState"
         },
         "name": {
@@ -2779,6 +2814,7 @@
       "type": "object",
       "properties": {
         "awsAuthConfig": {
+          "title": "AWSAuthConfig contains IAM authentication configuration",
           "$ref": "#/definitions/v1alpha1AWSAuthConfig"
         },
         "bearerToken": {
@@ -2789,6 +2825,7 @@
           "type": "string"
         },
         "tlsClientConfig": {
+          "title": "TLSClientConfig contains settings to enable transport layer security",
           "$ref": "#/definitions/v1alpha1TLSClientConfig"
         },
         "username": {
@@ -2951,6 +2988,7 @@
       "type": "object",
       "properties": {
         "finishedAt": {
+          "title": "FinishedAt contains time of operation completion",
           "$ref": "#/definitions/v1Time"
         },
         "message": {
@@ -2958,6 +2996,7 @@
           "type": "string"
         },
         "operation": {
+          "title": "Operation is the original requested operation",
           "$ref": "#/definitions/v1alpha1Operation"
         },
         "phase": {
@@ -2965,9 +3004,11 @@
           "title": "Phase is the current phase of the operation"
         },
         "startedAt": {
+          "title": "StartedAt contains time of operation start",
           "$ref": "#/definitions/v1Time"
         },
         "syncResult": {
+          "title": "SyncResult is the result of a Sync operation",
           "$ref": "#/definitions/v1alpha1SyncOperationResult"
         }
       }
@@ -3350,9 +3391,11 @@
           "type": "string"
         },
         "source": {
+          "title": "Source overrides the source definition set in the application.\nThis is typically set in a Rollback operation and nil during a Sync operation",
           "$ref": "#/definitions/v1alpha1ApplicationSource"
         },
         "syncStrategy": {
+          "title": "SyncStrategy describes how to perform the sync",
           "$ref": "#/definitions/v1alpha1SyncStrategy"
         }
       }
@@ -3388,6 +3431,7 @@
           "title": "Revision holds the git commit SHA of the sync"
         },
         "source": {
+          "title": "Source records the application source information of the sync, used for comparing auto-sync",
           "$ref": "#/definitions/v1alpha1ApplicationSource"
         }
       }
@@ -3397,6 +3441,7 @@
       "title": "SyncPolicy controls when a sync will be performed in response to updates in git",
       "properties": {
         "automated": {
+          "title": "Automated will keep an application synced to the target revision",
           "$ref": "#/definitions/v1alpha1SyncPolicyAutomated"
         }
       }
@@ -3432,9 +3477,11 @@
       "title": "SyncStrategy controls the manner in which a sync is performed",
       "properties": {
         "apply": {
+          "description": "Apply wil perform a `kubectl apply` to perform the sync.",
           "$ref": "#/definitions/v1alpha1SyncStrategyApply"
         },
         "hook": {
+          "title": "Hook will submit any referenced resources to perform the sync. This is the default strategy",
           "$ref": "#/definitions/v1alpha1SyncStrategyHook"
         }
       }
@@ -3455,6 +3502,7 @@
       "type": "object",
       "properties": {
         "syncStrategyApply": {
+          "title": "Embed SyncStrategyApply type to inherit any `apply` options\n+optional",
           "$ref": "#/definitions/v1alpha1SyncStrategyApply"
         }
       }

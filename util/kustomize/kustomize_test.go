@@ -52,6 +52,10 @@ func TestKustomizeBuild(t *testing.T) {
 			},
 		},
 		Images: []string{"nginx:1.15.5"},
+		CommonLabels: map[string]string{
+			"app.kubernetes.io/managed-by": "argo-cd",
+			"app.kubernetes.io/part-of":    "argo-cd-tests",
+		},
 	}
 	objs, imageTags, images, err := kustomize.Build(&kustomizeSource)
 	assert.Nil(t, err)

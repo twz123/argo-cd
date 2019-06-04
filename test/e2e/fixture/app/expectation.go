@@ -75,6 +75,13 @@ func ResourceSyncStatusIs(resource string, expected SyncStatusCode) Expectation 
 	}
 }
 
+func GvknResourceExists(group, version, kind, name string) Expectation {
+	return func(c *Consequences) (state, string) {
+		actual := c.gvknResource(group, version, kind, name)
+		return simple(actual.Name != "", fmt.Sprintf("resource '%s/%s/%s/%s' should exist", group, version, kind, name))
+	}
+}
+
 func ResourceHealthIs(resource string, expected HealthStatusCode) Expectation {
 	return func(c *Consequences) (state, string) {
 		actual := c.resource(resource).Health.Status
