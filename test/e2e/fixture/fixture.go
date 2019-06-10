@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"testing"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -20,8 +21,9 @@ import (
 
 	. "github.com/argoproj/argo-cd/errors"
 	argocdclient "github.com/argoproj/argo-cd/pkg/apiclient"
+	sessionpkg "github.com/argoproj/argo-cd/pkg/apiclient/session"
+	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	appclientset "github.com/argoproj/argo-cd/pkg/client/clientset/versioned"
-	"github.com/argoproj/argo-cd/server/session"
 	"github.com/argoproj/argo-cd/util"
 	grpcutil "github.com/argoproj/argo-cd/util/grpc"
 	"github.com/argoproj/argo-cd/util/rand"
@@ -40,10 +42,11 @@ const (
 
 var (
 	id               string
+	name             string
 	KubeClientset    kubernetes.Interface
 	AppClientset     appclientset.Interface
 	ArgoCDClientset  argocdclient.Client
-	SettingsManager  *settings.SettingsManager
+	settingsManager  *settings.SettingsManager
 	apiServerAddress string
 	token            string
 	plainText        bool
@@ -82,7 +85,7 @@ func init() {
 	CheckError(err)
 	defer util.Close(closer)
 
-	sessionResponse, err := client.Create(context.Background(), &session.SessionCreateRequest{Username: "admin", Password: adminPassword})
+	sessionResponse, err := client.Create(context.Background(), &sessionpkg.SessionCreateRequest{Username: "admin", Password: adminPassword})
 	CheckError(err)
 
 	ArgoCDClientset, err = argocdclient.NewClient(&argocdclient.ClientOptions{
@@ -93,7 +96,7 @@ func init() {
 	})
 	CheckError(err)
 
-	SettingsManager = settings.NewSettingsManager(context.Background(), KubeClientset, "argocd-e2e")
+	settingsManager = settings.NewSettingsManager(context.Background(), KubeClientset, "argocd-e2e")
 	token = sessionResponse.Token
 	plainText = !tlsTestResult.TLS
 
@@ -101,11 +104,11 @@ func init() {
 }
 
 func Name() string {
-	return fmt.Sprintf("argocd-e2e-%s", id)
+	return name
 }
 
 func repoDirectory() string {
-	return path.Join(tmpDir, id)
+	return path.Join(tmpDir, name)
 }
 func SetRepoURL(url string) {
 	repoUrl = url
@@ -116,12 +119,12 @@ func RepoURL() string {
 }
 
 func DeploymentNamespace() string {
-	return fmt.Sprintf("argocd-e2e-ns-%s", id)
+	return dnsFriendly(fmt.Sprintf("argocd-e2e-%s", id))
 }
 
 // creates a secret for the current test, this currently can only create a single secret
 func CreateSecret(username, password string) string {
-	secretName := fmt.Sprintf("argocd-e2e-secret-%s", id)
+	secretName := fmt.Sprintf("argocd-e2e-%s", name)
 	FailOnErr(Run("", "kubectl", "create", "secret", "generic", secretName,
 		"--from-literal=username="+username,
 		"--from-literal=password="+password,
@@ -130,7 +133,26 @@ func CreateSecret(username, password string) string {
 	return secretName
 }
 
-func EnsureCleanState() {
+func Settings(consumer func(s *settings.ArgoCDSettings)) {
+	s, err := settingsManager.GetSettings()
+	CheckError(err)
+	consumer(s)
+	CheckError(settingsManager.SaveSettings(s))
+}
+
+func SetResourceOverrides(overrides map[string]v1alpha1.ResourceOverride) {
+	Settings(func(s *settings.ArgoCDSettings) {
+		s.ResourceOverrides = overrides
+	})
+}
+
+func SetConfigManagementPlugin(plugin v1alpha1.ConfigManagementPlugin) {
+	Settings(func(s *settings.ArgoCDSettings) {
+		s.ConfigManagementPlugins = []v1alpha1.ConfigManagementPlugin{plugin}
+	})
+}
+
+func EnsureCleanState(t *testing.T) {
 
 	start := time.Now()
 
@@ -148,9 +170,9 @@ func EnsureCleanState() {
 	FailOnErr(Run("", "kubectl", "delete", "ns", "-l", testingLabel+"=true", "--field-selector", "status.phase=Active", "--wait=false"))
 
 	// reset settings
-	s, err := SettingsManager.GetSettings()
+	s, err := settingsManager.GetSettings()
 	CheckError(err)
-	CheckError(SettingsManager.SaveSettings(&settings.ArgoCDSettings{
+	CheckError(settingsManager.SaveSettings(&settings.ArgoCDSettings{
 		// changing theses causes a restart
 		AdminPasswordHash:    s.AdminPasswordHash,
 		AdminPasswordMtime:   s.AdminPasswordMtime,
@@ -168,9 +190,11 @@ func EnsureCleanState() {
 	// remove tmp dir
 	CheckError(os.RemoveAll(tmpDir))
 
-	// new random ID
-	id = strings.ToLower(rand.RandString(5))
-	repoUrl = fmt.Sprintf("file:///%s", repoDirectory())
+	// name based on test name
+	name = dnsFriendly(t.Name())
+	// random id - unique across test runs
+	id = name + "-" + strings.ToLower(rand.RandString(5))
+	repoUrl = fmt.Sprintf("file://%s", repoDirectory())
 
 	// create tmp dir
 	FailOnErr(Run("", "mkdir", "-p", tmpDir))
@@ -186,7 +210,7 @@ func EnsureCleanState() {
 	FailOnErr(Run("", "kubectl", "create", "ns", DeploymentNamespace()))
 	FailOnErr(Run("", "kubectl", "label", "ns", DeploymentNamespace(), testingLabel+"=true"))
 
-	log.WithFields(log.Fields{"duration": time.Since(start), "id": id}).Info("clean state")
+	log.WithFields(log.Fields{"duration": time.Since(start), "name": name, "id": id}).Info("clean state")
 }
 
 func RunCli(args ...string) (string, error) {
@@ -201,9 +225,7 @@ func RunCli(args ...string) (string, error) {
 
 func Patch(path string, jsonPatch string) {
 
-	if !strings.HasPrefix(repoUrl, "file://") {
-		log.WithFields(log.Fields{"repoUrl": repoUrl}).Fatal("cannot patch repo unless it is local")
-	}
+	checkLocalRepo()
 
 	log.WithFields(log.Fields{"path": path, "jsonPatch": jsonPatch}).Info("patching")
 
@@ -235,4 +257,22 @@ func Patch(path string, jsonPatch string) {
 	CheckError(ioutil.WriteFile(filename, bytes, 0644))
 	FailOnErr(Run(repoDirectory(), "git", "diff"))
 	FailOnErr(Run(repoDirectory(), "git", "commit", "-am", "patch"))
+}
+
+func Delete(path string) {
+
+	checkLocalRepo()
+
+	log.WithFields(log.Fields{"path": path}).Info("deleting")
+
+	CheckError(os.Remove(filepath.Join(repoDirectory(), path)))
+
+	FailOnErr(Run(repoDirectory(), "git", "diff"))
+	FailOnErr(Run(repoDirectory(), "git", "commit", "-am", "delete"))
+}
+
+func checkLocalRepo() {
+	if !strings.HasPrefix(repoUrl, "file://") {
+		log.WithFields(log.Fields{"repoUrl": repoUrl}).Fatal("cannot patch repo unless it is local")
+	}
 }

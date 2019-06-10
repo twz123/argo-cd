@@ -12,9 +12,13 @@ Install:
 
 * [docker](https://docs.docker.com/install/#supported-platforms)
 * [golang](https://golang.org/)
+* [dep](https://github.com/golang/dep)
+* [protobuf](https://developers.google.com/protocol-buffers/)
 * [ksonnet](https://github.com/ksonnet/ksonnet#install)
 * [helm](https://github.com/helm/helm/releases)
 * [kustomize](https://github.com/kubernetes-sigs/kustomize/releases)
+* [go-swagger](https://github.com/go-swagger/go-swagger/blob/master/docs/install.md)
+* [jq](https://stedolan.github.io/jq/)
 * [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
 * [kubectx](https://kubectx.dev)
 * [minikube](https://kubernetes.io/docs/setup/minikube/) or Docker for Desktop
@@ -22,7 +26,8 @@ Install:
 Brew users can quickly install the lot:
 
 ```bash
-brew install go kubectl kubectx ksonnet/tap/ks kubernetes-helm kustomize
+brew tap go-swagger/go-swagger
+brew install go kubectl kubectx ksonnet/tap/ks kubernetes-helm kustomize 
 ```
 
 !!! note "Kustomize"
@@ -45,8 +50,15 @@ cd $GOPATH/src/github.com/argoproj/argo-cd
 Install go dependencies:
 
 ```bash
+go get github.com/gobuffalo/packr/packr
+go get github.com/gogo/protobuf/gogoproto
+go get github.com/golang/protobuf/protoc-gen-go
+go get github.com/golangci/golangci-lint/cmd/golangci-lint
+go get github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway
+go get github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger
 go get github.com/jstemmer/go-junit-report
 go get github.com/mattn/goreman
+go get golang.org/x/tools/cmd/goimports
 ```
 
 ## Building
@@ -86,15 +98,6 @@ kubectl -n argocd scale deployment.extensions/argocd-server --replicas 0
 kubectl -n argocd scale deployment.extensions/argocd-redis --replicas 0
 ```
 
-Then checkout and build the UI next to your code
-
-```
-cd $GOPATH/src/github.com/argoproj
-git clone git@github.com:argoproj/argo-cd-ui.git
-```
-
-Follow the UI's [README](https://github.com/argoproj/argo-cd-ui/blob/master/README.md) to build it.
-
 Note: you'll need to use the https://localhost:6443 cluster now.
 
 Then start the services:
@@ -130,7 +133,7 @@ Add your username as the environment variable, e.g. to your `~/.bash_profile`:
 export IMAGE_NAMESPACE=alexcollinsintuit
 ```
 
-If you have not built the UI image (see [the UI README](https://github.com/argoproj/argo-cd-ui/blob/master/README.md)), then do the following:
+If you have not built the UI image (see [the UI README](https://github.com/argoproj/argo-cd/blob/master/ui/README.md)), then do the following:
 
 ```bash
 docker pull argoproj/argocd-ui:latest
@@ -167,11 +170,3 @@ kubectl -n argocd scale deployment.extensions/argocd-redis --replicas 1
 ```
 
 Now you can set-up the port-forwarding and open the UI or CLI.
-
-## Pre-commit Checks
-
-Before you commit, make sure you've formatted and linted your code, or your PR will fail CI:
-
-```bash
-make pre-commit
-```

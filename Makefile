@@ -28,10 +28,10 @@ PROTO_FILES:=$(shell find server reposerver -type f -name "*.proto")
 SERVER_PROTO_FILES:=$(shell find server -type f -name "*.proto")
 
 override LDFLAGS += \
-  -X ${PACKAGE}.version=${VERSION} \
-  -X ${PACKAGE}.buildDate=${BUILD_DATE} \
-  -X ${PACKAGE}.gitCommit=${GIT_COMMIT} \
-  -X ${PACKAGE}.gitTreeState=${GIT_TREE_STATE}
+  -X ${PACKAGE}/common.version=${VERSION} \
+  -X ${PACKAGE}/common.buildDate=${BUILD_DATE} \
+  -X ${PACKAGE}/common.gitCommit=${GIT_COMMIT} \
+  -X ${PACKAGE}/common.gitTreeState=${GIT_TREE_STATE}
 
 ifeq (${STATIC_BUILD}, true)
 override LDFLAGS += -extldflags "-static"
@@ -39,7 +39,7 @@ endif
 
 ifneq (${GIT_TAG},)
 IMAGE_TAG=${GIT_TAG}
-LDFLAGS += -X ${PACKAGE}.gitTag=${GIT_TAG}
+LDFLAGS += -X ${PACKAGE}/common.gitTag=${GIT_TAG}
 endif
 
 ifeq (${DOCKER_PUSH},true)
@@ -91,7 +91,7 @@ codegen: protogen clientgen openapigen manifests
 
 .PHONY: cli
 cli: clean-debug | dist/packr
-	CGO_ENABLED=0 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/${CLI_NAME} ./cmd/argocd
+	CGO_ENABLED=0 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/${CLI_NAME} ./cmd/argocd
 
 .PHONY: release-cli
 release-cli: clean-debug image
@@ -104,7 +104,7 @@ release-cli: clean-debug image
 argocd-util: clean-debug
 	# Build argocd-util as a statically linked binary, so it could run within the
 	# alpine-based dex container (argoproj/argo-cd#844)
-	CGO_ENABLED=0 go build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
+	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
 
 .PHONY: manifests
 manifests:
@@ -114,15 +114,15 @@ manifests:
 # and policy.csv files into the go binary
 .PHONY: server
 server: clean-debug | dist/packr
-	CGO_ENABLED=0 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
+	CGO_ENABLED=0 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
 
 .PHONY: repo-server
 repo-server:
-	CGO_ENABLED=0 go build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
+	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
 
 .PHONY: controller
 controller:
-	CGO_ENABLED=0 ${PACKR_CMD} build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
+	CGO_ENABLED=0 ${PACKR_CMD} build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
 
 .PHONY: image
 ifeq ($(DEV_IMAGE), true)
@@ -132,12 +132,12 @@ ifeq ($(DEV_IMAGE), true)
 # .dockerignore.
 image: packr
 	docker build -t argocd-base --target argocd-base .
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd ./cmd/argocd
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 dist/packr build -v -i -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-darwin-amd64 ./cmd/argocd
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd ./cmd/argocd
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-darwin-amd64 ./cmd/argocd
 	cp Dockerfile.dev dist
 	docker build -t $(IMAGE_PREFIX)argocd:$(IMAGE_TAG) -f dist/Dockerfile.dev dist
 else
@@ -156,7 +156,9 @@ dep-ensure: dist/dep
 	dist/dep ensure -no-vendor
 
 .PHONY: lint
-lint: | dist/golangci-lint
+lint: | dist/goimports dist/golangci-lint
+	# golangci-lint does not do a good job of formatting imports
+	dist/goimports -local github.com/argoproj/argo-cd -w `find . ! -path './vendor/*' ! -path './pkg/client/*' -type f -name '*.go'`
 	dist/golangci-lint run --fix --verbose
 
 .PHONY: build
@@ -166,6 +168,10 @@ build:
 .PHONY: test
 test:
 	go test -v -covermode=count -coverprofile=coverage.out `go list ./... | grep -v "test/e2e"`
+
+.PHONY: cover
+cover:
+	go tool cover -html=coverage.out
 
 .PHONY: test-e2e
 test-e2e: cli
@@ -238,10 +244,6 @@ pkg/apis/%/generated.proto pkg/apis/%/generated.pb.go: pkg/apis/% | dist/go-to-p
 		'$<'
 
 # Generate combined Swagger spec for server
-assets/swagger.json: $(addprefix dist/swagger_out/,$(addsuffix .swagger.json,$(basename $(SERVER_PROTO_FILES)))) | dist/empty-consolidated-swagger.json dist/swagger
-	@echo Consolidate Swagger specs into $@...
-	dist/swagger mixin -c 24 dist/empty-consolidated-swagger.json $(sort $^) > '$@'
-
 define EMPTY_CONSOLIDATED_SWAGGER
 {
   "swagger": "2.0",
@@ -253,8 +255,11 @@ define EMPTY_CONSOLIDATED_SWAGGER
   "paths": {}
 }
 endef
-dist/empty-consolidated-swagger.json:
-	$(file >$@,$(EMPTY_CONSOLIDATED_SWAGGER))
+assets/swagger.json: $(addprefix dist/swagger_out/,$(addsuffix .swagger.json,$(basename $(SERVER_PROTO_FILES)))) | dist/swagger dist/jq
+	@echo Consolidate Swagger specs into $@...
+	$(file >dist/empty-consolidated-swagger.json,$(EMPTY_CONSOLIDATED_SWAGGER))
+	dist/swagger mixin -c 24 dist/empty-consolidated-swagger.json $(sort $^) > dist/consolidated-swagger.json
+	dist/jq -r 'del(.definitions[].properties[]? | select(."$$ref"!=null and .description!=null).description) | del(.definitions[].properties[]? | select(."$$ref"!=null and .title!=null).title)' dist/consolidated-swagger.json > '$@'
 
 dist/dep:
 	@echo Fetching $(@F)...

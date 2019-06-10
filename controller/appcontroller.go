@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/argoproj/argo-cd/pkg/apis/application"
-
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	apierr "k8s.io/apimachinery/pkg/api/errors"
@@ -28,6 +26,7 @@ import (
 	statecache "github.com/argoproj/argo-cd/controller/cache"
 	"github.com/argoproj/argo-cd/controller/metrics"
 	"github.com/argoproj/argo-cd/errors"
+	"github.com/argoproj/argo-cd/pkg/apis/application"
 	appv1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	appclientset "github.com/argoproj/argo-cd/pkg/client/clientset/versioned"
 	appinformers "github.com/argoproj/argo-cd/pkg/client/informers/externalversions"
@@ -973,6 +972,7 @@ func (ctrl *ApplicationController) watchSettings(ctx context.Context) {
 	prevAppLabelKey := ctrl.settings.GetAppInstanceLabelKey()
 	prevResourceExclusions := ctrl.settings.ResourceExclusions
 	prevResourceInclusions := ctrl.settings.ResourceInclusions
+	prevConfigManagementPlugins := ctrl.settings.ConfigManagementPlugins
 	done := false
 	for !done {
 		select {
@@ -993,6 +993,11 @@ func (ctrl *ApplicationController) watchSettings(ctx context.Context) {
 				log.WithFields(log.Fields{"prevResourceInclusions": prevResourceInclusions, "newResourceInclusions": newSettings.ResourceInclusions}).Info("resource inclusions modified")
 				ctrl.stateCache.Invalidate()
 				prevResourceInclusions = newSettings.ResourceInclusions
+			}
+			if !reflect.DeepEqual(prevConfigManagementPlugins, newSettings.ConfigManagementPlugins) {
+				log.WithFields(log.Fields{"prevConfigManagementPlugins": prevConfigManagementPlugins, "newConfigManagementPlugins": newSettings.ConfigManagementPlugins}).Info("config management plugins modified")
+				ctrl.stateCache.Invalidate()
+				prevConfigManagementPlugins = newSettings.ConfigManagementPlugins
 			}
 		case <-ctx.Done():
 			done = true
