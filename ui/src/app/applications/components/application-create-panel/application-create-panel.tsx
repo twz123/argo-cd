@@ -1,13 +1,13 @@
-import { DataLoader, DropDownMenu, FormField, Select } from 'argo-ui';
+import {Checkbox, DataLoader, DropDownMenu, FormField, Select} from 'argo-ui';
 import * as deepMerge from 'deepmerge';
 import * as React from 'react';
-import { FieldApi, Form, FormApi, FormField as ReactFormField, Text } from 'react-form';
+import {FieldApi, Form, FormApi, FormField as ReactFormField, Text} from 'react-form';
+import {AutocompleteField, clusterTitle, YamlEditor} from '../../../shared/components';
+import * as models from '../../../shared/models';
+import {services} from '../../../shared/services';
+import { ApplicationParameters } from '../application-parameters/application-parameters';
 
 const jsonMergePatch = require('json-merge-patch');
-
-import { AutocompleteField, CheckboxField, TagsInputField, YamlEditor } from '../../../shared/components';
-import * as models from '../../../shared/models';
-import { services } from '../../../shared/services';
 
 require('./application-create-panel.scss');
 
@@ -40,30 +40,28 @@ const DEFAULT_APP: Partial<models.Application> = {
 
 const AutoSyncFormField = ReactFormField((props: {fieldApi: FieldApi, className: string }) => {
     const manual = 'Manual';
-    const auto = 'Automatic, but do not automatically prune resources';
-    const autoWithPrune = 'Automatic with automatic pruning';
+    const auto = 'Automatic';
 
     const { fieldApi: {getValue, setValue}} = props;
-    const value = getValue() as models.SyncPolicy;
-
-    let selectedOption = manual;
-    if (value && value.automated) {
-        selectedOption = value.automated.prune && autoWithPrune || auto;
-    }
+    const policy = getValue() as models.SyncPolicy;
 
     return (
-    <Select value={selectedOption} options={[ manual, auto, autoWithPrune ]} onChange={(opt) => {
-        let policy: models.SyncPolicy;
-        switch (opt.value) {
-            case auto:
-                policy = { automated: { prune: false } };
-                break;
-            case autoWithPrune:
-                policy = { automated: { prune: true } };
-                break;
-        }
-        setValue(policy);
-    }} />);
+        <React.Fragment>
+            <label>Sync Policy</label>
+            <Select value={policy && policy.automated ? auto : manual} options={[ manual, auto ]} onChange={(opt) => {
+                setValue( opt.value === auto ? {automated: { prune: false, selfHeal: false }} : null );
+            }} />
+            {policy && policy.automated && (
+                <div className='application-create-panel__sync-params'>
+                    <Checkbox onChange={(val) => setValue({ automated: {...policy.automated, prune: val} })}
+                        checked={policy.automated.prune} id='policyPrune' /> <label htmlFor='policyPrune'>
+                    Prune Resources</label> <Checkbox onChange={(val) => setValue({ automated: {...policy.automated, selfHeal: val} })}
+                        checked={policy.automated.selfHeal} id='policySelfHeal' /> <label htmlFor='selfHeal'>
+                    Self Heal</label>
+                </div>
+            )}
+        </React.Fragment>
+    );
 });
 
 export const ApplicationCreatePanel = (props: {
@@ -91,7 +89,7 @@ export const ApplicationCreatePanel = (props: {
             <DataLoader key='creation-deps' load={() => Promise.all([
                 services.projects.list().then((projects) => projects.map((proj) => proj.metadata.name).sort()),
                 services.clusters.list().then((clusters) => clusters
-                    .map((cluster) => ({label: `${cluster.name || 'in-cluster'}: ${cluster.server}`, value: cluster.server}))
+                    .map((cluster) => ({label: clusterTitle(cluster), value: cluster.server}))
                     .sort((first, second) => first.label.localeCompare(second.label)),
                 ),
                 services.repos.list().then((repos) => repos.map((repo) => repo.repo).sort()),
@@ -113,7 +111,7 @@ export const ApplicationCreatePanel = (props: {
                                 'spec.source.repoURL': !a.spec.source.repoURL && 'Repository URL is required',
                                 'spec.source.targetRevision': !a.spec.source.targetRevision && 'Revision is required',
                                 'spec.source.path': !a.spec.source.path && 'Path is required',
-                                'spec.destination.server': !a.spec.destination.server && 'Cluster URL is required',
+                                'spec.destination.server': !a.spec.destination.server && 'Cluster is required',
                                 'spec.destination.namespace': !a.spec.destination.namespace && 'Namespace is required',
                             })} defaultValues={app} formDidUpdate={(state) => props.onAppChanged(state.values as any)} onSubmit={props.createApp} getApi={props.getFormApi}>
                             {(api) => {
@@ -131,7 +129,7 @@ export const ApplicationCreatePanel = (props: {
                                             <FormField formApi={api} label='Project' field='spec.project' component={AutocompleteField} componentProps={{items: projects}} />
                                         </div>
                                         <div className='argo-form-row'>
-                                            <FormField formApi={api} label='Sync-policy' field='spec.syncPolicy' component={AutoSyncFormField} />
+                                            <FormField formApi={api} field='spec.syncPolicy' component={AutoSyncFormField} />
                                         </div>
                                     </div>
                                 );
@@ -170,7 +168,7 @@ export const ApplicationCreatePanel = (props: {
                                         <p>DESTINATION</p>
                                         <div className='argo-form-row'>
                                             <FormField formApi={api}
-                                                label='Cluster URL' field='spec.destination.server' componentProps={{items: clusters}} component={AutocompleteField}/>
+                                                label='Cluster' field='spec.destination.server' componentProps={{items: clusters}} component={AutocompleteField}/>
                                         </div>
                                         <div className='argo-form-row'>
                                             <FormField formApi={api} label='Namespace' field='spec.destination.namespace' component={Text}/>
@@ -179,64 +177,55 @@ export const ApplicationCreatePanel = (props: {
                                 );
 
                                 const typePanel = () => (
-                                    <div className='white-box'>
-                                        <DataLoader
-                                            input={{repoURL: app.spec.source.repoURL, path: app.spec.source.path, targetRevision: app.spec.source.targetRevision }}
-                                            load={async (src) => {
-                                                if (src.repoURL && src.path) {
-                                                    return services.repos.appDetails(src.repoURL, src.path, src.targetRevision).catch(() => ({
-                                                        type: 'Directory',
-                                                        details: {},
-                                                    }));
-                                                } else {
-                                                    return {
-                                                        type: 'Directory',
-                                                        details: {},
-                                                    };
-                                                }
-                                            }}>
-                                        {(details: models.RepoAppDetails) => {
-                                            const type = explicitPathType && explicitPathType.path === app.spec.source.path && explicitPathType.type || details.type;
-                                            return (
-                                                <React.Fragment>
-                                                    <DropDownMenu anchor={() => (<p>{type} <i className='fa fa-caret-down'/></p>)} items={appTypes.map(
-                                                        (item) => ({ title: item.type, action: () => {
-                                                            setExplicitPathType({ type: item.type, path: app.spec.source.path });
-                                                            normalizeTypeFields(api, item.type);
-                                                        }}))}
-                                                    />
-                                                    {type === 'Directory' && (
-                                                        <FormField formApi={api}
-                                                            label='Include subdirectories' field='spec.source.directory.recurse' component={CheckboxField}/>
-                                                    ) || type === 'Kustomize' && (
-                                                        <div className='argo-form-row'>
-                                                            <FormField formApi={api} label='Name Prefix' field='spec.source.kustomize.namePrefix' component={Text} />
-                                                        </div>
-                                                    ) || type === 'Ksonnet' && (
-                                                        <div className='argo-form-row'>
-                                                            <FormField formApi={api} label='Environment' field='spec.source.ksonnet.environment'
-                                                                component={AutocompleteField} componentProps={{
-                                                                    items: details.ksonnet && Object.keys(details.ksonnet.environments) || [],
-                                                                }}
-                                                            />
-                                                        </div>
-                                                    ) || type === 'Helm' && (
-                                                        <div className='argo-form-row'>
-                                                            <FormField formApi={api} label='Values Files' field='spec.source.helm.valueFiles' componentProps={{
-                                                                options: details.helm && details.helm.valueFiles,
-                                                                noTagsLabel: 'No values files selected',
-                                                            }} component={TagsInputField} />
-                                                        </div>
-                                                    ) || type === 'Plugin' && (
-                                                        <div className='argo-form-row'>
-                                                            <FormField formApi={api} label='Name' field='spec.source.plugin.name' component={Text} />
-                                                        </div>
-                                                    )}
-                                                </React.Fragment>
-                                            );
-                                        }}
-                                        </DataLoader>
-                                    </div>
+                                    <DataLoader
+                                        input={{repoURL: app.spec.source.repoURL, path: app.spec.source.path, targetRevision: app.spec.source.targetRevision }}
+                                        load={async (src) => {
+                                            if (src.repoURL && src.path) {
+                                                return services.repos.appDetails(src.repoURL, src.path, src.targetRevision).catch(() => ({
+                                                    type: 'Directory',
+                                                    details: {},
+                                                }));
+                                            } else {
+                                                return {
+                                                    type: 'Directory',
+                                                    details: {},
+                                                };
+                                            }
+                                        }}>
+                                    {(details: models.RepoAppDetails) => {
+                                        const type = explicitPathType && explicitPathType.path === app.spec.source.path && explicitPathType.type || details.type;
+                                        if (details.type !== type) {
+                                            switch (type) {
+                                                case 'Helm':
+                                                    details = {type, path: details.path, helm: { name: '', valueFiles: [],  path: '', parameters: [] } };
+                                                    break;
+                                                case 'Kustomize':
+                                                    details = {type, path: details.path, kustomize: { path: '' } };
+                                                    break;
+                                                case 'Ksonnet':
+                                                    details = {type, path: details.path, ksonnet: { name: '', path: '', environments: {}, parameters: []} };
+                                                    break;
+                                                // Directory or Plugin
+                                                default:
+                                                    details = {type, path: details.path, directory: {} };
+                                                    break;
+                                            }
+                                        }
+                                        return (
+                                            <React.Fragment>
+                                                <DropDownMenu anchor={() => (<p>{type} <i className='fa fa-caret-down'/></p>)} items={appTypes.map(
+                                                    (item) => ({ title: item.type, action: () => {
+                                                        setExplicitPathType({ type: item.type, path: app.spec.source.path });
+                                                        normalizeTypeFields(api, item.type);
+                                                    }}))}
+                                                />
+                                                <ApplicationParameters noReadonlyMode={true} application={app} details={details} save={async (updatedApp) => {
+                                                    api.setAllValues(updatedApp);
+                                                }} />
+                                            </React.Fragment>
+                                        );
+                                    }}
+                                    </DataLoader>
                                 );
 
                                 return (

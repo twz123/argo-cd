@@ -1,5 +1,12 @@
 # FAQ
 
+## I've deleted/corrupted my repo and can't delete my app.
+
+Argo CD can't delete an app if it cannot generate manifests. You need to either: 
+
+1. Reinstate/fix your repo.
+1. Delete the app using `--cascade=false` and then manually deleting the resources.
+
 ## Why is my application still `OutOfSync` immediately after a successful Sync?
 
 See [Diffing](user-guide/diffing.md) documentation for reasons resources can be OutOfSync, and ways to configure
@@ -15,7 +22,7 @@ to return `Progressing` state instead of `Healthy`.
  ([contour](https://github.com/heptio/contour/issues/403), [traefik](https://github.com/argoproj/argo-cd/issues/968#issuecomment-451082913)) don't update
  `status.loadBalancer.ingress` field which causes `Ingress` to stuck in `Progressing` state forever.
 
-* `StatufulSet` is considered healthy if value of `status.updatedReplicas` field matches to `spec.replicas` field. Due to Kubernetes bug
+* `StatefulSet` is considered healthy if value of `status.updatedReplicas` field matches to `spec.replicas` field. Due to Kubernetes bug
 [kubernetes/kubernetes#68573](https://github.com/kubernetes/kubernetes/issues/68573) the `status.updatedReplicas` is not populated. So unless you run Kubernetes version which
 include the fix [kubernetes/kubernetes#67570](https://github.com/kubernetes/kubernetes/pull/67570) `StatefulSet` might stay in `Progressing` state.
 
@@ -23,9 +30,21 @@ As workaround Argo CD allows providing [health check](operator-manual/health.md)
 
 ## I forgot the admin password, how do I reset it?
 
-Edit the `argocd-secret` secret and update the `admin.password` field with a new bcrypt hash. You
-can use a site like https://www.browserling.com/tools/bcrypt to generate a new hash. Another option
-is to delete both the `admin.password` and `admin.passwordMtime` keys and restart argocd-server.
+By default the password is set to the name of the server pod, as per [the getting started guide](getting_started.md).
+
+To change the password, edit the `argocd-secret` secret and update the `admin.password` field with a new bcrypt hash. You
+can use a site like https://www.browserling.com/tools/bcrypt to generate a new hash. For example:
+
+```bash
+# bcrypt(Password1!)=$2a$10$hDj12Tw9xVmvybSahN1Y0.f9DZixxN8oybyA32Uy/eqWklFU4Mo8O
+kubectl -n argocd patch secret argocd-secret \
+  -p '{"stringData": {
+    "admin.password": "$2a$10$hDj12Tw9xVmvybSahN1Y0.f9DZixxN8oybyA32Uy/eqWklFU4Mo8O",
+    "admin.passwordMtime": "'$(date +%FT%T%Z)'"
+  }}'
+```
+
+Another option is to delete both the `admin.password` and `admin.passwordMtime` keys and restart argocd-server. This will set the password back to the pod name as per [the getting started guide](getting_started.md).
 
 ## Argo CD cannot deploy Helm Chart based applications without internet access, how can I solve it?
 
@@ -62,3 +81,47 @@ Now you can manually verify that cluster is accessible from the Argo CD pod.
 To terminate the sync, click on the "synchronisation" then "terminate":
 
 ![Synchronization](assets/synchronization-button.png) ![Terminate](assets/terminate-button.png)
+
+## Why Is My App Out Of Sync Even After Syncing?
+
+Is some cases, the tool you use may conflict with Argo CD by adding the `app.kubernetes.io/instance` label. E.g. using Kustomize common labels feature.
+
+Argo CD automatically sets the `app.kubernetes.io/instance` label and uses it to determine which resources form the app. If the tool does this too, this causes confusion. You can change this label by setting the `application.instanceLabelKey` value in the `argocd-cm`.  We recommend that you use `argocd.argoproj.io/instance`. 
+
+!!! note 
+    When you make this change your applications will become out of sync and will need re-syncing.
+
+See [#1482](https://github.com/argoproj/argo-cd/issues/1482).
+
+
+# How Do I Fix "invalid cookie, longer than max length 4093"?
+
+Argo CD uses a JWT as the auth token. You likely are part of many groups and have gone over the 4KB limit which is set for cookies.
+You can get the list of groups by opening "developer tools -> network"
+
+* Click log in
+* Find the call to `<argocd_instance>/auth/callback?code=<random_string>`
+
+Decode the token at https://jwt.io/. That will provide the list of teams that you can remove yourself from.
+
+See [#2165](https://github.com/argoproj/argo-cd/issues/2165).
+
+## Why Am I Getting `rpc error: code = Unavailable desc = transport is closing` When Using The CLI?
+
+Maybe you're behind a proxy that does not support HTTP 2? Try the `--grcp-web` flag.:
+
+```bash
+argocd ... --grcp-web
+```
+
+## Why Am I Getting `x509: certificate signed by unknown authority` When Using The CLI?
+
+Your not running your server with correct certs.
+
+If you're not running in a production system (e.g. you're testing Argo CD out), try the `--insecure` flag:
+
+```bash
+argocd ... --insecure
+```
+
+!!! warning "Do not use `--insecure` in production"

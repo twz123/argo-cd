@@ -34,6 +34,11 @@ func TestHelmTemplateParams(t *testing.T) {
 				Name:  "service.port",
 				Value: "1234",
 			},
+			{
+				Name:        "service.annotations.prometheus\\.io/scrape",
+				Value:       "true",
+				ForceString: true,
+			},
 		},
 	}
 	objs, err := h.Template("test", "", &opts)
@@ -47,6 +52,7 @@ func TestHelmTemplateParams(t *testing.T) {
 			assert.Nil(t, err)
 			assert.Equal(t, apiv1.ServiceTypeLoadBalancer, svc.Spec.Type)
 			assert.Equal(t, int32(1234), svc.Spec.Ports[0].TargetPort.IntVal)
+			assert.Equal(t, "true", svc.ObjectMeta.Annotations["prometheus.io/scrape"])
 		}
 	}
 }
@@ -156,6 +162,45 @@ func TestHelmTemplateReleaseName(t *testing.T) {
 			err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &stateful)
 			assert.Nil(t, err)
 			assert.Equal(t, "test-redis-master", stateful.ObjectMeta.Name)
+		}
+	}
+}
+
+func TestHelmArgCleaner(t *testing.T) {
+	cleanArgs := []string{`--these-args`, `are-clean`, `--foo`, `bar`}
+	argsToBeCleaned := make([]string, len(cleanArgs))
+	copy(argsToBeCleaned, cleanArgs)
+
+	cleanHelmParameters(argsToBeCleaned)
+	assert.Equal(t, cleanArgs, argsToBeCleaned)
+
+	dirtyArgs := []string{`--these-args`, `are-not, clean`, `--foo`, `b\,a,r`}
+	argsToBeCleaned = make([]string, len(dirtyArgs))
+	copy(argsToBeCleaned, dirtyArgs)
+
+	cleanHelmParameters(argsToBeCleaned)
+	assert.NotEqual(t, cleanArgs, argsToBeCleaned)
+	assert.Contains(t, argsToBeCleaned, `are-not\, clean`)
+	assert.Contains(t, argsToBeCleaned, `b\,a\,r`)
+
+}
+
+func TestHelmValues(t *testing.T) {
+	h := NewHelmApp("./testdata/redis", []*argoappv1.HelmRepository{})
+	opts := argoappv1.ApplicationSourceHelm{
+		ValueFiles: []string{"values-production.yaml"},
+		Values: `cluster:
+  slaveCount: 2
+`,
+	}
+	objs, err := h.Template("test", "", &opts)
+	assert.NoError(t, err)
+	for _, obj := range objs {
+		if obj.GetKind() == "Deployment" && obj.GetName() == "test-redis-slave" {
+			var dep appsv1.Deployment
+			err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &dep)
+			assert.NoError(t, err)
+			assert.Equal(t, int32(2), *dep.Spec.Replicas)
 		}
 	}
 }

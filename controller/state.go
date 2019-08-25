@@ -9,6 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 
@@ -18,8 +19,7 @@ import (
 	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	appv1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	appclientset "github.com/argoproj/argo-cd/pkg/client/clientset/versioned"
-	"github.com/argoproj/argo-cd/reposerver"
-	"github.com/argoproj/argo-cd/reposerver/repository"
+	"github.com/argoproj/argo-cd/reposerver/apiclient"
 	"github.com/argoproj/argo-cd/util"
 	"github.com/argoproj/argo-cd/util/argo"
 	"github.com/argoproj/argo-cd/util/db"
@@ -28,6 +28,7 @@ import (
 	hookutil "github.com/argoproj/argo-cd/util/hook"
 	kubeutil "github.com/argoproj/argo-cd/util/kube"
 	"github.com/argoproj/argo-cd/util/resource"
+	"github.com/argoproj/argo-cd/util/resource/ignore"
 	"github.com/argoproj/argo-cd/util/settings"
 )
 
@@ -52,12 +53,12 @@ func GetLiveObjs(res []managedResource) []*unstructured.Unstructured {
 }
 
 type ResourceInfoProvider interface {
-	IsNamespaced(server string, obj *unstructured.Unstructured) (bool, error)
+	IsNamespaced(server string, gk schema.GroupKind) (bool, error)
 }
 
 // AppStateManager defines methods which allow to compare application spec and actual application state.
 type AppStateManager interface {
-	CompareAppState(app *v1alpha1.Application, revision string, source v1alpha1.ApplicationSource, noCache bool) (*comparisonResult, error)
+	CompareAppState(app *v1alpha1.Application, revision string, source v1alpha1.ApplicationSource, noCache bool, localObjects []string) *comparisonResult
 	SyncAppState(app *v1alpha1.Application, state *v1alpha1.OperationState)
 }
 
@@ -77,16 +78,16 @@ type comparisonResult struct {
 type appStateManager struct {
 	metricsServer  *metrics.MetricsServer
 	db             db.ArgoDB
-	settings       *settings.ArgoCDSettings
+	settingsMgr    *settings.SettingsManager
 	appclientset   appclientset.Interface
 	projInformer   cache.SharedIndexInformer
 	kubectl        kubeutil.Kubectl
-	repoClientset  reposerver.Clientset
+	repoClientset  apiclient.Clientset
 	liveStateCache statecache.LiveStateCache
 	namespace      string
 }
 
-func (m *appStateManager) getRepoObjs(app *v1alpha1.Application, source v1alpha1.ApplicationSource, appLabelKey, revision string, noCache bool) ([]*unstructured.Unstructured, []*unstructured.Unstructured, *repository.ManifestResponse, error) {
+func (m *appStateManager) getRepoObjs(app *v1alpha1.Application, source v1alpha1.ApplicationSource, appLabelKey, revision string, noCache bool) ([]*unstructured.Unstructured, []*unstructured.Unstructured, *apiclient.ManifestResponse, error) {
 	helmRepos, err := m.db.ListHelmRepos(context.Background())
 	if err != nil {
 		return nil, nil, nil, err
@@ -105,12 +106,21 @@ func (m *appStateManager) getRepoObjs(app *v1alpha1.Application, source v1alpha1
 		revision = source.TargetRevision
 	}
 
-	tools := make([]*appv1.ConfigManagementPlugin, len(m.settings.ConfigManagementPlugins))
-	for i := range m.settings.ConfigManagementPlugins {
-		tools[i] = &m.settings.ConfigManagementPlugins[i]
+	plugins, err := m.settingsMgr.GetConfigManagementPlugins()
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
-	manifestInfo, err := repoClient.GenerateManifest(context.Background(), &repository.ManifestRequest{
+	tools := make([]*appv1.ConfigManagementPlugin, len(plugins))
+	for i := range plugins {
+		tools[i] = &plugins[i]
+	}
+
+	buildOptions, err := m.settingsMgr.GetKustomizeBuildOptions()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	manifestInfo, err := repoClient.GenerateManifest(context.Background(), &apiclient.ManifestRequest{
 		Repo:              repo,
 		HelmRepos:         helmRepos,
 		Revision:          revision,
@@ -120,19 +130,29 @@ func (m *appStateManager) getRepoObjs(app *v1alpha1.Application, source v1alpha1
 		Namespace:         app.Spec.Destination.Namespace,
 		ApplicationSource: &source,
 		Plugins:           tools,
+		KustomizeOptions: &appv1.KustomizeOptions{
+			BuildOptions: buildOptions,
+		},
 	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	targetObjs, hooks, err := unmarshalManifests(manifestInfo.Manifests)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return targetObjs, hooks, manifestInfo, nil
+}
 
+func unmarshalManifests(manifests []string) ([]*unstructured.Unstructured, []*unstructured.Unstructured, error) {
 	targetObjs := make([]*unstructured.Unstructured, 0)
 	hooks := make([]*unstructured.Unstructured, 0)
-	for _, manifest := range manifestInfo.Manifests {
+	for _, manifest := range manifests {
 		obj, err := v1alpha1.UnmarshalToUnstructured(manifest)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
-		if resource.Ignore(obj) {
+		if ignore.Ignore(obj) {
 			continue
 		}
 		if hookutil.IsHook(obj) {
@@ -141,7 +161,7 @@ func (m *appStateManager) getRepoObjs(app *v1alpha1.Application, source v1alpha1
 			targetObjs = append(targetObjs, obj)
 		}
 	}
-	return targetObjs, hooks, manifestInfo, nil
+	return targetObjs, hooks, nil
 }
 
 func DeduplicateTargetObjects(
@@ -154,7 +174,7 @@ func DeduplicateTargetObjects(
 	targetByKey := make(map[kubeutil.ResourceKey][]*unstructured.Unstructured)
 	for i := range objs {
 		obj := objs[i]
-		isNamespaced, err := infoProvider.IsNamespaced(server, obj)
+		isNamespaced, err := infoProvider.IsNamespaced(server, obj.GroupVersionKind().GroupKind())
 		if err != nil {
 			return objs, nil, err
 		}
@@ -217,31 +237,91 @@ func dedupLiveResources(targetObjs []*unstructured.Unstructured, liveObjsByKey m
 	}
 }
 
+func (m *appStateManager) getComparisonSettings(app *appv1.Application) (string, map[string]v1alpha1.ResourceOverride, diff.Normalizer, error) {
+	resourceOverrides, err := m.settingsMgr.GetResourceOverrides()
+	if err != nil {
+		return "", nil, nil, err
+	}
+	appLabelKey, err := m.settingsMgr.GetAppInstanceLabelKey()
+	if err != nil {
+		return "", nil, nil, err
+	}
+	diffNormalizer, err := argo.NewDiffNormalizer(app.Spec.IgnoreDifferences, resourceOverrides)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return appLabelKey, resourceOverrides, diffNormalizer, nil
+}
+
 // CompareAppState compares application git state to the live app state, using the specified
 // revision and supplied source. If revision or overrides are empty, then compares against
 // revision and overrides in the app spec.
-func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision string, source v1alpha1.ApplicationSource, noCache bool) (*comparisonResult, error) {
-	diffNormalizer, err := argo.NewDiffNormalizer(app.Spec.IgnoreDifferences, m.settings.ResourceOverrides)
+func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision string, source v1alpha1.ApplicationSource, noCache bool, localManifests []string) *comparisonResult {
+	reconciledAt := metav1.Now()
+	appLabelKey, resourceOverrides, diffNormalizer, err := m.getComparisonSettings(app)
+
+	// return unknown comparison result if basic comparison settings cannot be loaded
 	if err != nil {
-		return nil, err
+		return &comparisonResult{
+			reconciledAt: reconciledAt,
+			syncStatus: &v1alpha1.SyncStatus{
+				ComparedTo: appv1.ComparedTo{Source: source, Destination: app.Spec.Destination},
+				Status:     appv1.SyncStatusCodeUnknown,
+			},
+			healthStatus: &appv1.HealthStatus{Status: appv1.HealthStatusUnknown},
+		}
 	}
-	logCtx := log.WithField("application", app.Name)
-	logCtx.Infof("Comparing app state (cluster: %s, namespace: %s)", app.Spec.Destination.Server, app.Spec.Destination.Namespace)
-	observedAt := metav1.Now()
+
+	// do best effort loading live and target state to present as much information about app state as possible
 	failedToLoadObjs := false
 	conditions := make([]v1alpha1.ApplicationCondition, 0)
-	appLabelKey := m.settings.GetAppInstanceLabelKey()
-	targetObjs, hooks, manifestInfo, err := m.getRepoObjs(app, source, appLabelKey, revision, noCache)
-	if err != nil {
-		targetObjs = make([]*unstructured.Unstructured, 0)
-		conditions = append(conditions, v1alpha1.ApplicationCondition{Type: v1alpha1.ApplicationConditionComparisonError, Message: err.Error()})
-		failedToLoadObjs = true
+
+	logCtx := log.WithField("application", app.Name)
+	logCtx.Infof("Comparing app state (cluster: %s, namespace: %s)", app.Spec.Destination.Server, app.Spec.Destination.Namespace)
+
+	var targetObjs []*unstructured.Unstructured
+	var hooks []*unstructured.Unstructured
+	var manifestInfo *apiclient.ManifestResponse
+
+	if len(localManifests) == 0 {
+		targetObjs, hooks, manifestInfo, err = m.getRepoObjs(app, source, appLabelKey, revision, noCache)
+		if err != nil {
+			targetObjs = make([]*unstructured.Unstructured, 0)
+			conditions = append(conditions, v1alpha1.ApplicationCondition{Type: v1alpha1.ApplicationConditionComparisonError, Message: err.Error()})
+			failedToLoadObjs = true
+		}
+	} else {
+		targetObjs, hooks, err = unmarshalManifests(localManifests)
+		if err != nil {
+			targetObjs = make([]*unstructured.Unstructured, 0)
+			conditions = append(conditions, v1alpha1.ApplicationCondition{Type: v1alpha1.ApplicationConditionComparisonError, Message: err.Error()})
+			failedToLoadObjs = true
+		}
+		manifestInfo = nil
 	}
+
 	targetObjs, dedupConditions, err := DeduplicateTargetObjects(app.Spec.Destination.Server, app.Spec.Destination.Namespace, targetObjs, m.liveStateCache)
 	if err != nil {
 		conditions = append(conditions, v1alpha1.ApplicationCondition{Type: v1alpha1.ApplicationConditionComparisonError, Message: err.Error()})
 	}
 	conditions = append(conditions, dedupConditions...)
+
+	resFilter, err := m.settingsMgr.GetResourcesFilter()
+	if err != nil {
+		conditions = append(conditions, v1alpha1.ApplicationCondition{Type: v1alpha1.ApplicationConditionComparisonError, Message: err.Error()})
+	} else {
+		for i := len(targetObjs) - 1; i >= 0; i-- {
+			targetObj := targetObjs[i]
+			gvk := targetObj.GroupVersionKind()
+			if resFilter.IsExcludedResource(gvk.Group, gvk.Kind, app.Spec.Destination.Server) {
+				targetObjs = append(targetObjs[:i], targetObjs[i+1:]...)
+				conditions = append(conditions, v1alpha1.ApplicationCondition{
+					Type:    v1alpha1.ApplicationConditionExcludedResourceWarning,
+					Message: fmt.Sprintf("Resource %s/%s %s is excluded in the settings", gvk.Group, gvk.Kind, targetObj.GetName()),
+				})
+			}
+		}
+	}
 
 	logCtx.Debugf("Generated config manifests")
 	liveObjByKey, err := m.liveStateCache.GetManagedLiveObjs(app, targetObjs)
@@ -268,7 +348,7 @@ func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision st
 	for i, obj := range targetObjs {
 		gvk := obj.GroupVersionKind()
 		ns := util.FirstNonEmpty(obj.GetNamespace(), app.Spec.Destination.Namespace)
-		if namespaced, err := m.liveStateCache.IsNamespaced(app.Spec.Destination.Server, obj); err == nil && !namespaced {
+		if namespaced, err := m.liveStateCache.IsNamespaced(app.Spec.Destination.Server, obj.GroupVersionKind().GroupKind()); err == nil && !namespaced {
 			ns = ""
 		}
 		key := kubeutil.NewResourceKey(gvk.Group, gvk.Kind, ns, obj.GetName())
@@ -291,7 +371,9 @@ func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision st
 	// Do the actual comparison
 	diffResults, err := diff.DiffArray(targetObjs, managedLiveObj, diffNormalizer)
 	if err != nil {
-		return nil, err
+		diffResults = &diff.DiffResultList{}
+		failedToLoadObjs = true
+		conditions = append(conditions, v1alpha1.ApplicationCondition{Type: v1alpha1.ApplicationConditionComparisonError, Message: err.Error()})
 	}
 
 	syncCode := v1alpha1.SyncStatusCodeSynced
@@ -309,16 +391,17 @@ func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision st
 		gvk := obj.GroupVersionKind()
 
 		resState := v1alpha1.ResourceStatus{
-			Namespace: obj.GetNamespace(),
-			Name:      obj.GetName(),
-			Kind:      gvk.Kind,
-			Version:   gvk.Version,
-			Group:     gvk.Group,
-			Hook:      hookutil.IsHook(obj),
+			Namespace:       obj.GetNamespace(),
+			Name:            obj.GetName(),
+			Kind:            gvk.Kind,
+			Version:         gvk.Version,
+			Group:           gvk.Group,
+			Hook:            hookutil.IsHook(obj),
+			RequiresPruning: targetObj == nil && liveObj != nil,
 		}
 
 		diffResult := diffResults.Diffs[i]
-		if resState.Hook || resource.Ignore(obj) {
+		if resState.Hook || ignore.Ignore(obj) {
 			// For resource hooks, don't store sync status, and do not affect overall sync status
 		} else if diffResult.Modified || targetObj == nil || liveObj == nil {
 			// Set resource state to OutOfSync since one of the following is true:
@@ -362,7 +445,7 @@ func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision st
 		syncStatus.Revision = manifestInfo.Revision
 	}
 
-	healthStatus, err := health.SetApplicationHealth(resourceSummaries, GetLiveObjs(managedResources), m.settings.ResourceOverrides, func(obj *unstructured.Unstructured) bool {
+	healthStatus, err := health.SetApplicationHealth(resourceSummaries, GetLiveObjs(managedResources), resourceOverrides, func(obj *unstructured.Unstructured) bool {
 		return !isSelfReferencedApp(app, kubeutil.GetObjectRef(obj))
 	})
 
@@ -371,7 +454,7 @@ func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision st
 	}
 
 	compRes := comparisonResult{
-		reconciledAt:     observedAt,
+		reconciledAt:     reconciledAt,
 		syncStatus:       &syncStatus,
 		healthStatus:     healthStatus,
 		resources:        resourceSummaries,
@@ -383,7 +466,7 @@ func (m *appStateManager) CompareAppState(app *v1alpha1.Application, revision st
 	if manifestInfo != nil {
 		compRes.appSourceType = v1alpha1.ApplicationSourceType(manifestInfo.SourceType)
 	}
-	return &compRes, nil
+	return &compRes
 }
 
 func (m *appStateManager) persistRevisionHistory(app *v1alpha1.Application, revision string, source v1alpha1.ApplicationSource) error {
@@ -418,10 +501,10 @@ func (m *appStateManager) persistRevisionHistory(app *v1alpha1.Application, revi
 func NewAppStateManager(
 	db db.ArgoDB,
 	appclientset appclientset.Interface,
-	repoClientset reposerver.Clientset,
+	repoClientset apiclient.Clientset,
 	namespace string,
 	kubectl kubeutil.Kubectl,
-	settings *settings.ArgoCDSettings,
+	settingsMgr *settings.SettingsManager,
 	liveStateCache statecache.LiveStateCache,
 	projInformer cache.SharedIndexInformer,
 	metricsServer *metrics.MetricsServer,
@@ -433,7 +516,7 @@ func NewAppStateManager(
 		kubectl:        kubectl,
 		repoClientset:  repoClientset,
 		namespace:      namespace,
-		settings:       settings,
+		settingsMgr:    settingsMgr,
 		projInformer:   projInformer,
 		metricsServer:  metricsServer,
 	}

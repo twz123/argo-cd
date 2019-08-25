@@ -1,10 +1,10 @@
-import { FormField, FormSelect } from 'argo-ui';
+import {FormField, FormSelect} from 'argo-ui';
 import * as React from 'react';
-import { Form, FormApi, Text } from 'react-form';
+import {Form, FormApi, Text} from 'react-form';
 
-import { DataLoader } from '../../../shared/components';
+import {AutocompleteField, CheckboxField, clusterTitle, DataLoader} from '../../../shared/components';
 import * as models from '../../../shared/models';
-import { ProjectParams, services } from '../../../shared/services';
+import {ProjectParams, services} from '../../../shared/services';
 
 require('./project-edit-panel.scss');
 
@@ -26,7 +26,14 @@ export const ProjectEditPanel = (props: {
         defaultValues={{sourceRepos: [], destinations: [], roles: [], clusterResourceWhitelist: [], namespaceResourceBlacklist: [], ...props.defaultParams}}
         validateError={(params: ProjectParams) => ({
             name: !params.name && 'Project name is required',
-        })}>
+        })}
+        preSubmit={(params: ProjectParams) => {
+            params.clusterResourceWhitelist.forEach((obj: models.GroupKind) => {
+                obj.group = obj.group.trim();
+                obj.kind = obj.kind.trim();
+            });
+            return params;
+        }}>
 
         {(api) => (
             <form onSubmit={api.submitForm} role='form' className='width-control'>
@@ -45,7 +52,11 @@ export const ProjectEditPanel = (props: {
                         {(api.values.sourceRepos as Array<string>).map((_, i) => (
                             <div key={i} className='row project-edit-panel__form-row'>
                                 <div className='columns small-12'>
-                                    <FormSelect field={['sourceRepos', i]} options={repos}/>
+                                    <FormField formApi={api} field={`sourceRepos[${i}]`}
+                                        component={AutocompleteField} componentProps={{
+                                            items: repos,
+                                        }}
+                                    />
                                     <i className='fa fa-times' onClick={() => api.setValue('sourceRepos', removeEl(api.values.sourceRepos, i))}/>
                                 </div>
                             </div>
@@ -55,21 +66,25 @@ export const ProjectEditPanel = (props: {
                     )}
                 </DataLoader>
 
-                <DataLoader load={() => services.clusters.list().then((clusters) => clusters.concat({server: '*'} as models.Cluster).map((cluster) => cluster.server))}>
+                <DataLoader load={() => services.clusters.list()}>
                     {(clusters) => (
                         <React.Fragment>
                             <h4>Destinations</h4>
-                            <div>Cluster URLs and namespaces where applications are permitted to be deployed to</div>
+                            <div>Cluster and namespaces where applications are permitted to be deployed to</div>
                             <div className='argo-table-list__head'>
                                 <div className='row'>
-                                    <div className='columns small-5'>CLUSTER URL</div>
+                                    <div className='columns small-5'>CLUSTER</div>
                                     <div className='columns small-5'>NAMESPACE</div>
                                 </div>
                             </div>
                             {(api.values.destinations as Array<models.ApplicationDestination>).map((_, i) => (
                                 <div key={i} className='row project-edit-panel__form-row'>
                                     <div className='columns small-5'>
-                                        <FormSelect field={['destinations', i, 'server']} options={clusters}/>
+                                        <FormSelect field={['destinations', i, 'server']}
+                                                    options={clusters.map((cluster) => ({
+                                                        value: cluster.server,
+                                                        title: clusterTitle(cluster),
+                                                    })).concat({value: '*', title: '*'})}/>
                                     </div>
                                     <div className='columns small-5'>
                                         <Text className='argo-field' field={['destinations', i, 'namespace']}/>
@@ -140,6 +155,15 @@ export const ProjectEditPanel = (props: {
                     <a onClick={() => api.setValue('namespaceResourceBlacklist', api.values.namespaceResourceBlacklist.concat({ group: '', kind: '' }))}>
                         blacklist new namespaced resource
                     </a>
+                </React.Fragment>
+
+                <React.Fragment>
+                    <h4>Orphaned Resource Monitoring</h4>
+                    <div>Enables monitoring of top level resources in the application target namespace</div>
+                    <FormField formApi={api} label='Enabled' field='orphanedResourcesEnabled' component={CheckboxField} />
+                    {api.values.orphanedResourcesEnabled && (
+                        <FormField formApi={api} label='Warn' field='orphanedResourcesWarn' component={CheckboxField} />
+                    )}
                 </React.Fragment>
             </form>
         )}

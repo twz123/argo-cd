@@ -11,6 +11,7 @@ export interface EditablePanelItem {
     before?: React.ReactNode;
     view: string | React.ReactNode;
     edit?: (formApi: FormApi) => React.ReactNode;
+    titleEdit?: (formApi: FormApi) => React.ReactNode;
 }
 
 export interface EditablePanelProps<T> {
@@ -19,17 +20,27 @@ export interface EditablePanelProps<T> {
     validate?: (values: T) => any;
     save?: (input: T) => Promise<any>;
     items: EditablePanelItem[];
+    onModeSwitch?: () => any;
+    noReadonlyMode?: boolean;
 }
+
+interface EditablePanelState { edit: boolean; saving: boolean; }
 
 require('./editable-panel.scss');
 
-export class EditablePanel<T = {}> extends React.Component<EditablePanelProps<T>, { edit: boolean; saving: boolean }> {
+export class EditablePanel<T = {}> extends React.Component<EditablePanelProps<T>, EditablePanelState> {
 
     private formApi: FormApi;
 
     constructor(props: EditablePanelProps<T>) {
         super(props);
-        this.state = { edit: false, saving: false };
+        this.state = { edit: !!props.noReadonlyMode, saving: false };
+    }
+
+    public UNSAFE_componentWillReceiveProps(nextProps: EditablePanelProps<T>) {
+        if (JSON.stringify(this.props.values) !== JSON.stringify(nextProps.values)) {
+            this.formApi.setAllValues(nextProps.values);
+        }
     }
 
     public render() {
@@ -37,17 +48,23 @@ export class EditablePanel<T = {}> extends React.Component<EditablePanelProps<T>
             <Consumer>{(ctx) => (
             <div className={classNames('white-box editable-panel', {'editable-panel--disabled': this.state.saving})}>
                 <div className='white-box__details'>
-                    {this.props.save && (
+                    {!this.props.noReadonlyMode && this.props.save && (
                         <div className='editable-panel__buttons'>
                             {!this.state.edit && (
-                                <button onClick={() => this.setState({ edit: true })} className='argo-button argo-button--base'>Edit</button>
+                                <button onClick={() => {
+                                    this.setState({ edit: true });
+                                    this.onModeSwitch();
+                                }} className='argo-button argo-button--base'>Edit</button>
                             )}
                             {this.state.edit && (
                                 <React.Fragment>
                                     <button disabled={this.state.saving}
                                             onClick={() => !this.state.saving && this.formApi.submitForm(null)} className='argo-button argo-button--base'>
                                         Save
-                                    </button> <button onClick={() => this.setState({ edit: false })} className='argo-button argo-button--base-o'>Cancel</button>
+                                    </button> <button onClick={() => {
+                                        this.setState({ edit: false });
+                                        this.onModeSwitch();
+                                    }} className='argo-button argo-button--base-o'>Cancel</button>
                                 </React.Fragment>
                             )}
                         </div>
@@ -68,11 +85,16 @@ export class EditablePanel<T = {}> extends React.Component<EditablePanelProps<T>
                         ))}
                         </React.Fragment>
                     ) || (
-                        <Form getApi={(api) => this.formApi = api} onSubmit={async (input) => {
+                        <Form getApi={(api) => this.formApi = api} formDidUpdate={async (form) => {
+                            if (this.props.noReadonlyMode && this.props.save) {
+                                await this.props.save(form.values as any);
+                            }
+                        }} onSubmit={async (input) => {
                             try {
                                 this.setState({ saving: true });
                                 await this.props.save(input as any);
                                 this.setState({ edit: false, saving: false });
+                                this.onModeSwitch();
                             } catch (e) {
                                 ctx.notifications.show({
                                     content: <ErrorNotification title='Unable to save changes' e={e}/>,
@@ -89,7 +111,7 @@ export class EditablePanel<T = {}> extends React.Component<EditablePanelProps<T>
                                         {item.before && item.before}
                                         <div className='row white-box__details-row'>
                                             <div className='columns small-3'>
-                                                {item.title}
+                                                {item.titleEdit && item.titleEdit(api) || item.title}
                                             </div>
                                             <div className='columns small-9'>
                                                 {item.edit && item.edit(api) || item.view}
@@ -105,5 +127,11 @@ export class EditablePanel<T = {}> extends React.Component<EditablePanelProps<T>
             </div>
             )}</Consumer>
         );
+    }
+
+    private onModeSwitch() {
+        if (this.props.onModeSwitch) {
+            this.props.onModeSwitch();
+        }
     }
 }

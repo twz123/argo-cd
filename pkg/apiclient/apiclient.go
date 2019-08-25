@@ -27,6 +27,7 @@ import (
 	"github.com/argoproj/argo-cd/common"
 	accountpkg "github.com/argoproj/argo-cd/pkg/apiclient/account"
 	applicationpkg "github.com/argoproj/argo-cd/pkg/apiclient/application"
+	certificatepkg "github.com/argoproj/argo-cd/pkg/apiclient/certificate"
 	clusterpkg "github.com/argoproj/argo-cd/pkg/apiclient/cluster"
 	projectpkg "github.com/argoproj/argo-cd/pkg/apiclient/project"
 	repositorypkg "github.com/argoproj/argo-cd/pkg/apiclient/repository"
@@ -58,6 +59,8 @@ type Client interface {
 	OIDCConfig(context.Context, *settingspkg.Settings) (*oauth2.Config, *oidc.Provider, error)
 	NewRepoClient() (io.Closer, repositorypkg.RepositoryServiceClient, error)
 	NewRepoClientOrDie() (io.Closer, repositorypkg.RepositoryServiceClient)
+	NewCertClient() (io.Closer, certificatepkg.CertificateServiceClient, error)
+	NewCertClientOrDie() (io.Closer, certificatepkg.CertificateServiceClient)
 	NewClusterClient() (io.Closer, clusterpkg.ClusterServiceClient, error)
 	NewClusterClientOrDie() (io.Closer, clusterpkg.ClusterServiceClient)
 	NewApplicationClient() (io.Closer, applicationpkg.ApplicationServiceClient, error)
@@ -437,6 +440,23 @@ func (c *client) NewRepoClientOrDie() (io.Closer, repositorypkg.RepositoryServic
 	return conn, repoIf
 }
 
+func (c *client) NewCertClient() (io.Closer, certificatepkg.CertificateServiceClient, error) {
+	conn, closer, err := c.newConn()
+	if err != nil {
+		return nil, nil, err
+	}
+	certIf := certificatepkg.NewCertificateServiceClient(conn)
+	return closer, certIf, nil
+}
+
+func (c *client) NewCertClientOrDie() (io.Closer, certificatepkg.CertificateServiceClient) {
+	conn, certIf, err := c.NewCertClient()
+	if err != nil {
+		log.Fatalf("Failed to establish connection to %s: %v", c.ServerAddr, err)
+	}
+	return conn, certIf
+}
+
 func (c *client) NewClusterClient() (io.Closer, clusterpkg.ClusterServiceClient, error) {
 	conn, closer, err := c.newConn()
 	if err != nil {
@@ -602,7 +622,7 @@ func isCanceledContextErr(err error) bool {
 		return true
 	}
 	if stat, ok := status.FromError(err); ok {
-		if stat.Code() == codes.Canceled {
+		if stat.Code() == codes.Canceled || stat.Code() == codes.DeadlineExceeded {
 			return true
 		}
 	}

@@ -1,6 +1,6 @@
 import { FormField, FormSelect, getNestedField } from 'argo-ui';
 import * as React from 'react';
-import { FieldApi, FormApi, FormField as ReactFormField, Text } from 'react-form';
+import { FieldApi, FormApi, FormField as ReactFormField, Text, TextArea } from 'react-form';
 
 import { CheckboxField, EditablePanel, EditablePanelItem, TagsInputField } from '../../../shared/components';
 import * as models from '../../../shared/models';
@@ -27,7 +27,7 @@ function overridesFirst(first: { overrideIndex: number}, second: { overrideIndex
     return first.overrideIndex - second.overrideIndex;
 }
 
-function getParamsEditableItems<T extends { name: string, value: string }>(
+function getParamsEditableItems(
     app: models.Application,
     title: string,
     fieldsPath: string,
@@ -84,7 +84,13 @@ function getParamsEditableItems<T extends { name: string, value: string }>(
     }).map((item, i) => ({...item, before: i === 0 && <p style={{ marginTop: '1em' }}>{title}</p> || null }));
 }
 
-export const ApplicationParameters = (props: { application: models.Application, details: models.RepoAppDetails, save?: (application: models.Application) => Promise<any> }) => {
+export const ApplicationParameters = (props: {
+    application: models.Application,
+    details: models.RepoAppDetails,
+    save?: (application: models.Application) => Promise<any>,
+    noReadonlyMode?: boolean,
+}) => {
+
     const app = props.application;
     const source = props.application.spec.source;
     const [removedOverrides, setRemovedOverrides] = React.useState(new Array<boolean>());
@@ -150,29 +156,6 @@ export const ApplicationParameters = (props: { application: models.Application, 
                 return { overrideIndex, original, metadata: { name, value } };
             }), ImageTagFieldEditor));
         }
-
-        const imageTags = props.details && props.details.kustomize && props.details.kustomize.imageTags || [];
-
-        if (imageTags.length > 0) {
-            const imagesByName = new Map<string, models.KustomizeImageTag>();
-            imageTags.forEach((img) => imagesByName.set(img.name, img));
-
-            const overridesByName = new Map<string, number>();
-            (source.kustomize && source.kustomize.imageTags || []).forEach((override, i) => overridesByName.set(override.name, i));
-
-            attributes = attributes.concat(getParamsEditableItems(app, 'IMAGE TAGS', 'spec.source.kustomize.imageTags', removedOverrides, setRemovedOverrides,
-                    distinct(imagesByName.keys(), overridesByName.keys()).map((name) => {
-                const param = imagesByName.get(name);
-                const original = param && param.value || '';
-                let overrideIndex = overridesByName.get(name);
-                if (overrideIndex === undefined) {
-                    overrideIndex = -1;
-                }
-                const value = overrideIndex > -1 && source.kustomize.imageTags[overrideIndex].value || original;
-                return { overrideIndex, original, metadata: { name, value } };
-            })));
-        }
-
     } else if (props.details.type === 'Helm' && props.details.helm) {
         attributes.push({
             title: 'VALUES FILES',
@@ -182,6 +165,21 @@ export const ApplicationParameters = (props: { application: models.Application, 
                     options: props.details.helm.valueFiles,
                     noTagsLabel: 'No values files selected',
                 }}/>
+            ),
+        });
+        attributes.push({
+            title: 'VALUES',
+            view: app.spec.source.helm && (<pre>{app.spec.source.helm.values}</pre>),
+            edit: (formApi: FormApi) => (
+                <div>
+                    <pre><FormField formApi={formApi} field='spec.source.helm.values' component={TextArea}/></pre>
+                    {props.details.helm.values && (
+                        <div>
+                            <label>values.yaml</label>
+                            <pre>{props.details.helm.values}</pre>
+                        </div>
+                    )}
+                </div>
             ),
         });
         const paramsByName = new Map<string, models.HelmParameter>();
@@ -224,15 +222,12 @@ export const ApplicationParameters = (props: { application: models.Application, 
                 if (input.spec.source.ksonnet && input.spec.source.ksonnet.parameters) {
                     input.spec.source.ksonnet.parameters = input.spec.source.ksonnet.parameters.filter(isDefined);
                 }
-                if (input.spec.source.kustomize && input.spec.source.kustomize.imageTags) {
-                    input.spec.source.kustomize.imageTags = input.spec.source.kustomize.imageTags.filter(isDefined);
-                }
                 if (input.spec.source.kustomize && input.spec.source.kustomize.images) {
                     input.spec.source.kustomize.images = input.spec.source.kustomize.images.filter(isDefined);
                 }
                 await props.save(input);
                 setRemovedOverrides(new Array<boolean>());
             })}
-            values={app} title={props.details.type.toLocaleUpperCase()} items={attributes} />
+            values={app} title={props.details.type.toLocaleUpperCase()} items={attributes} noReadonlyMode={props.noReadonlyMode} />
     );
 };

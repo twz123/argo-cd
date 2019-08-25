@@ -15,7 +15,6 @@ import (
 	projectpkg "github.com/argoproj/argo-cd/pkg/apiclient/project"
 	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/util"
-	projectutil "github.com/argoproj/argo-cd/util/project"
 )
 
 const (
@@ -40,6 +39,8 @@ func NewProjectRoleCommand(clientOpts *argocdclient.ClientOptions) *cobra.Comman
 	roleCommand.AddCommand(NewProjectRoleDeleteTokenCommand(clientOpts))
 	roleCommand.AddCommand(NewProjectRoleAddPolicyCommand(clientOpts))
 	roleCommand.AddCommand(NewProjectRoleRemovePolicyCommand(clientOpts))
+	roleCommand.AddCommand(NewProjectRoleAddGroupCommand(clientOpts))
+	roleCommand.AddCommand(NewProjectRoleRemoveGroupCommand(clientOpts))
 	return roleCommand
 }
 
@@ -64,7 +65,7 @@ func NewProjectRoleAddPolicyCommand(clientOpts *argocdclient.ClientOptions) *cob
 			proj, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
 
-			role, roleIndex, err := projectutil.GetRoleByName(proj, roleName)
+			role, roleIndex, err := proj.GetRoleByName(roleName)
 			errors.CheckError(err)
 
 			policy := fmt.Sprintf(policyTemplate, proj.Name, role.Name, opts.action, proj.Name, opts.object, opts.permission)
@@ -99,7 +100,7 @@ func NewProjectRoleRemovePolicyCommand(clientOpts *argocdclient.ClientOptions) *
 			proj, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
 
-			role, roleIndex, err := projectutil.GetRoleByName(proj, roleName)
+			role, roleIndex, err := proj.GetRoleByName(roleName)
 			errors.CheckError(err)
 
 			policyToRemove := fmt.Sprintf(policyTemplate, proj.Name, role.Name, opts.action, proj.Name, opts.object, opts.permission)
@@ -144,7 +145,7 @@ func NewProjectRoleCreateCommand(clientOpts *argocdclient.ClientOptions) *cobra.
 			proj, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
 
-			_, _, err = projectutil.GetRoleByName(proj, roleName)
+			_, _, err = proj.GetRoleByName(roleName)
 			if err == nil {
 				fmt.Printf("Role '%s' already exists\n", roleName)
 				return
@@ -178,7 +179,7 @@ func NewProjectRoleDeleteCommand(clientOpts *argocdclient.ClientOptions) *cobra.
 			proj, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
 
-			_, index, err := projectutil.GetRoleByName(proj, roleName)
+			_, index, err := proj.GetRoleByName(roleName)
 			if err != nil {
 				fmt.Printf("Role '%s' does not exist in project\n", roleName)
 				return
@@ -248,8 +249,28 @@ func NewProjectRoleDeleteTokenCommand(clientOpts *argocdclient.ClientOptions) *c
 	return command
 }
 
+// Print list of project role names
+func printProjectRoleListName(roles []v1alpha1.ProjectRole) {
+	for _, role := range roles {
+		fmt.Println(role.Name)
+	}
+}
+
+// Print table of project roles
+func printProjectRoleListTable(roles []v1alpha1.ProjectRole) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "ROLE-NAME\tDESCRIPTION\n")
+	for _, role := range roles {
+		fmt.Fprintf(w, "%s\t%s\n", role.Name, role.Description)
+	}
+	_ = w.Flush()
+}
+
 // NewProjectRoleListCommand returns a new instance of an `argocd proj roles list` command
 func NewProjectRoleListCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
+	var (
+		output string
+	)
 	var command = &cobra.Command{
 		Use:   "list PROJECT",
 		Short: "List all the roles in a project",
@@ -264,14 +285,14 @@ func NewProjectRoleListCommand(clientOpts *argocdclient.ClientOptions) *cobra.Co
 
 			project, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ROLE-NAME\tDESCRIPTION\n")
-			for _, role := range project.Spec.Roles {
-				fmt.Fprintf(w, "%s\t%s\n", role.Name, role.Description)
+			if output == "name" {
+				printProjectRoleListName(project.Spec.Roles)
+			} else {
+				printProjectRoleListTable(project.Spec.Roles)
 			}
-			_ = w.Flush()
 		},
 	}
+	command.Flags().StringVarP(&output, "output", "o", "wide", "Output format. One of: wide|name")
 	return command
 }
 
@@ -293,7 +314,7 @@ func NewProjectRoleGetCommand(clientOpts *argocdclient.ClientOptions) *cobra.Com
 			proj, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
 
-			role, _, err := projectutil.GetRoleByName(proj, roleName)
+			role, _, err := proj.GetRoleByName(roleName)
 			errors.CheckError(err)
 
 			printRoleFmtStr := "%-15s%s\n"
@@ -322,9 +343,9 @@ func NewProjectRoleGetCommand(clientOpts *argocdclient.ClientOptions) *cobra.Com
 func NewProjectRoleAddGroupCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
 	var command = &cobra.Command{
 		Use:   "add-group PROJECT ROLE-NAME GROUP-CLAIM",
-		Short: "Add a policy to a project role",
+		Short: "Add a group claim to a project role",
 		Run: func(c *cobra.Command, args []string) {
-			if len(args) != 2 {
+			if len(args) != 3 {
 				c.HelpFunc()(c, args)
 				os.Exit(1)
 			}
@@ -333,9 +354,9 @@ func NewProjectRoleAddGroupCommand(clientOpts *argocdclient.ClientOptions) *cobr
 			defer util.Close(conn)
 			proj, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
-			updated, err := projectutil.AddGroupToRole(proj, roleName, groupName)
+			updated, err := proj.AddGroupToRole(roleName, groupName)
 			errors.CheckError(err)
-			if updated {
+			if !updated {
 				fmt.Printf("Group '%s' already present in role '%s'\n", groupName, roleName)
 				return
 			}
@@ -362,7 +383,7 @@ func NewProjectRoleRemoveGroupCommand(clientOpts *argocdclient.ClientOptions) *c
 			defer util.Close(conn)
 			proj, err := projIf.Get(context.Background(), &projectpkg.ProjectQuery{Name: projName})
 			errors.CheckError(err)
-			updated, err := projectutil.RemoveGroupFromRole(proj, roleName, groupName)
+			updated, err := proj.RemoveGroupFromRole(roleName, groupName)
 			errors.CheckError(err)
 			if !updated {
 				fmt.Printf("Group '%s' not present in role '%s'\n", groupName, roleName)

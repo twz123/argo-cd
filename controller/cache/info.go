@@ -11,11 +11,16 @@ import (
 	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/util"
 	"github.com/argoproj/argo-cd/util/kube"
+	"github.com/argoproj/argo-cd/util/resource"
 )
 
 func populateNodeInfo(un *unstructured.Unstructured, node *node) {
 
 	gvk := un.GroupVersionKind()
+	revision := resource.GetRevision(un)
+	if revision > 0 {
+		node.info = append(node.info, v1alpha1.InfoItem{Name: "Revision", Value: fmt.Sprintf("Rev:%v", revision)})
+	}
 	switch gvk.Group {
 	case "":
 		switch gvk.Kind {
@@ -33,7 +38,6 @@ func populateNodeInfo(un *unstructured.Unstructured, node *node) {
 			return
 		}
 	}
-	node.info = []v1alpha1.InfoItem{}
 }
 
 func getIngress(un *unstructured.Unstructured) []v1.LoadBalancerIngress {
@@ -122,14 +126,23 @@ func populateIngressInfo(un *unstructured.Unstructured, node *node) {
 						stringPort = fmt.Sprintf("%v", port)
 					}
 
+					var externalURL string
 					switch stringPort {
 					case "80", "http":
-						urlsSet[fmt.Sprintf("http://%s", host)] = true
+						externalURL = fmt.Sprintf("http://%s", host)
 					case "443", "https":
-						urlsSet[fmt.Sprintf("https://%s", host)] = true
+						externalURL = fmt.Sprintf("https://%s", host)
 					default:
-						urlsSet[fmt.Sprintf("http://%s:%s", host, stringPort)] = true
+						externalURL = fmt.Sprintf("http://%s:%s", host, stringPort)
 					}
+
+					subPath := ""
+					if nestedPath, ok, err := unstructured.NestedString(path, "path"); ok && err == nil {
+						subPath = nestedPath
+					}
+
+					externalURL += subPath
+					urlsSet[externalURL] = true
 				}
 			}
 		}
@@ -149,7 +162,6 @@ func populatePodInfo(un *unstructured.Unstructured, node *node) {
 	pod := v1.Pod{}
 	err := runtime.DefaultUnstructuredConverter.FromUnstructured(un.Object, &pod)
 	if err != nil {
-		node.info = []v1alpha1.InfoItem{}
 		return
 	}
 	restarts := 0
@@ -237,7 +249,6 @@ func populatePodInfo(un *unstructured.Unstructured, node *node) {
 		reason = "Terminating"
 	}
 
-	node.info = make([]v1alpha1.InfoItem, 0)
 	if reason != "" {
 		node.info = append(node.info, v1alpha1.InfoItem{Name: "Status Reason", Value: reason})
 	}

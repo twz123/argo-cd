@@ -13,7 +13,7 @@ import proto "github.com/gogo/protobuf/proto"
 import fmt "fmt"
 import math "math"
 import v1alpha1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
-import repository "github.com/argoproj/argo-cd/reposerver/repository"
+import apiclient "github.com/argoproj/argo-cd/reposerver/apiclient"
 import _ "github.com/gogo/protobuf/gogoproto"
 import _ "google.golang.org/genproto/googleapis/api/annotations"
 import _ "k8s.io/api/core/v1"
@@ -47,7 +47,7 @@ func (m *RepoAppsQuery) Reset()         { *m = RepoAppsQuery{} }
 func (m *RepoAppsQuery) String() string { return proto.CompactTextString(m) }
 func (*RepoAppsQuery) ProtoMessage()    {}
 func (*RepoAppsQuery) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{0}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{0}
 }
 func (m *RepoAppsQuery) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -103,7 +103,7 @@ func (m *AppInfo) Reset()         { *m = AppInfo{} }
 func (m *AppInfo) String() string { return proto.CompactTextString(m) }
 func (*AppInfo) ProtoMessage()    {}
 func (*AppInfo) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{1}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{1}
 }
 func (m *AppInfo) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -148,21 +148,21 @@ func (m *AppInfo) GetPath() string {
 
 // RepoAppDetailsQuery contains query information for app details request
 type RepoAppDetailsQuery struct {
-	Repo                 string                             `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
-	Revision             string                             `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	Path                 string                             `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
-	Helm                 *repository.HelmAppDetailsQuery    `protobuf:"bytes,4,opt,name=helm" json:"helm,omitempty"`
-	Ksonnet              *repository.KsonnetAppDetailsQuery `protobuf:"bytes,5,opt,name=ksonnet" json:"ksonnet,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}                           `json:"-"`
-	XXX_unrecognized     []byte                             `json:"-"`
-	XXX_sizecache        int32                              `json:"-"`
+	Repo                 string                            `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
+	Revision             string                            `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	Path                 string                            `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	Helm                 *apiclient.HelmAppDetailsQuery    `protobuf:"bytes,4,opt,name=helm" json:"helm,omitempty"`
+	Ksonnet              *apiclient.KsonnetAppDetailsQuery `protobuf:"bytes,5,opt,name=ksonnet" json:"ksonnet,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}                          `json:"-"`
+	XXX_unrecognized     []byte                            `json:"-"`
+	XXX_sizecache        int32                             `json:"-"`
 }
 
 func (m *RepoAppDetailsQuery) Reset()         { *m = RepoAppDetailsQuery{} }
 func (m *RepoAppDetailsQuery) String() string { return proto.CompactTextString(m) }
 func (*RepoAppDetailsQuery) ProtoMessage()    {}
 func (*RepoAppDetailsQuery) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{2}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{2}
 }
 func (m *RepoAppDetailsQuery) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -212,14 +212,14 @@ func (m *RepoAppDetailsQuery) GetPath() string {
 	return ""
 }
 
-func (m *RepoAppDetailsQuery) GetHelm() *repository.HelmAppDetailsQuery {
+func (m *RepoAppDetailsQuery) GetHelm() *apiclient.HelmAppDetailsQuery {
 	if m != nil {
 		return m.Helm
 	}
 	return nil
 }
 
-func (m *RepoAppDetailsQuery) GetKsonnet() *repository.KsonnetAppDetailsQuery {
+func (m *RepoAppDetailsQuery) GetKsonnet() *apiclient.KsonnetAppDetailsQuery {
 	if m != nil {
 		return m.Ksonnet
 	}
@@ -238,7 +238,7 @@ func (m *RepoAppsResponse) Reset()         { *m = RepoAppsResponse{} }
 func (m *RepoAppsResponse) String() string { return proto.CompactTextString(m) }
 func (*RepoAppsResponse) ProtoMessage()    {}
 func (*RepoAppsResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{3}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{3}
 }
 func (m *RepoAppsResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -286,7 +286,7 @@ func (m *RepoQuery) Reset()         { *m = RepoQuery{} }
 func (m *RepoQuery) String() string { return proto.CompactTextString(m) }
 func (*RepoQuery) ProtoMessage()    {}
 func (*RepoQuery) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{4}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{4}
 }
 func (m *RepoQuery) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -322,6 +322,109 @@ func (m *RepoQuery) GetRepo() string {
 	return ""
 }
 
+// RepoAccessQuery is a query for checking access to a repo
+type RepoAccessQuery struct {
+	// The URL to the repo
+	Repo string `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
+	// Username for accessing repo
+	Username string `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	// Password for accessing repo
+	Password string `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	// Private key data for accessing SSH repository
+	SshPrivateKey string `protobuf:"bytes,4,opt,name=sshPrivateKey,proto3" json:"sshPrivateKey,omitempty"`
+	// Whether to skip certificate or host key validation
+	Insecure bool `protobuf:"varint,5,opt,name=insecure,proto3" json:"insecure,omitempty"`
+	// TLS client cert data for accessing HTTPS repository
+	TlsClientCertData string `protobuf:"bytes,6,opt,name=tlsClientCertData,proto3" json:"tlsClientCertData,omitempty"`
+	// TLS client cert key for accessing HTTPS repository
+	TlsClientCertKey     string   `protobuf:"bytes,7,opt,name=tlsClientCertKey,proto3" json:"tlsClientCertKey,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *RepoAccessQuery) Reset()         { *m = RepoAccessQuery{} }
+func (m *RepoAccessQuery) String() string { return proto.CompactTextString(m) }
+func (*RepoAccessQuery) ProtoMessage()    {}
+func (*RepoAccessQuery) Descriptor() ([]byte, []int) {
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{5}
+}
+func (m *RepoAccessQuery) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *RepoAccessQuery) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_RepoAccessQuery.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalTo(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (dst *RepoAccessQuery) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_RepoAccessQuery.Merge(dst, src)
+}
+func (m *RepoAccessQuery) XXX_Size() int {
+	return m.Size()
+}
+func (m *RepoAccessQuery) XXX_DiscardUnknown() {
+	xxx_messageInfo_RepoAccessQuery.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_RepoAccessQuery proto.InternalMessageInfo
+
+func (m *RepoAccessQuery) GetRepo() string {
+	if m != nil {
+		return m.Repo
+	}
+	return ""
+}
+
+func (m *RepoAccessQuery) GetUsername() string {
+	if m != nil {
+		return m.Username
+	}
+	return ""
+}
+
+func (m *RepoAccessQuery) GetPassword() string {
+	if m != nil {
+		return m.Password
+	}
+	return ""
+}
+
+func (m *RepoAccessQuery) GetSshPrivateKey() string {
+	if m != nil {
+		return m.SshPrivateKey
+	}
+	return ""
+}
+
+func (m *RepoAccessQuery) GetInsecure() bool {
+	if m != nil {
+		return m.Insecure
+	}
+	return false
+}
+
+func (m *RepoAccessQuery) GetTlsClientCertData() string {
+	if m != nil {
+		return m.TlsClientCertData
+	}
+	return ""
+}
+
+func (m *RepoAccessQuery) GetTlsClientCertKey() string {
+	if m != nil {
+		return m.TlsClientCertKey
+	}
+	return ""
+}
+
 type RepoResponse struct {
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
@@ -332,7 +435,7 @@ func (m *RepoResponse) Reset()         { *m = RepoResponse{} }
 func (m *RepoResponse) String() string { return proto.CompactTextString(m) }
 func (*RepoResponse) ProtoMessage()    {}
 func (*RepoResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{5}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{6}
 }
 func (m *RepoResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -373,7 +476,7 @@ func (m *RepoCreateRequest) Reset()         { *m = RepoCreateRequest{} }
 func (m *RepoCreateRequest) String() string { return proto.CompactTextString(m) }
 func (*RepoCreateRequest) ProtoMessage()    {}
 func (*RepoCreateRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{6}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{7}
 }
 func (m *RepoCreateRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -427,7 +530,7 @@ func (m *RepoUpdateRequest) Reset()         { *m = RepoUpdateRequest{} }
 func (m *RepoUpdateRequest) String() string { return proto.CompactTextString(m) }
 func (*RepoUpdateRequest) ProtoMessage()    {}
 func (*RepoUpdateRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_repository_085a58cd976bcc45, []int{7}
+	return fileDescriptor_repository_3b37238e26fe0d6f, []int{8}
 }
 func (m *RepoUpdateRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -469,6 +572,7 @@ func init() {
 	proto.RegisterType((*RepoAppDetailsQuery)(nil), "repository.RepoAppDetailsQuery")
 	proto.RegisterType((*RepoAppsResponse)(nil), "repository.RepoAppsResponse")
 	proto.RegisterType((*RepoQuery)(nil), "repository.RepoQuery")
+	proto.RegisterType((*RepoAccessQuery)(nil), "repository.RepoAccessQuery")
 	proto.RegisterType((*RepoResponse)(nil), "repository.RepoResponse")
 	proto.RegisterType((*RepoCreateRequest)(nil), "repository.RepoCreateRequest")
 	proto.RegisterType((*RepoUpdateRequest)(nil), "repository.RepoUpdateRequest")
@@ -490,13 +594,15 @@ type RepositoryServiceClient interface {
 	// ListApps returns list of apps in the repo
 	ListApps(ctx context.Context, in *RepoAppsQuery, opts ...grpc.CallOption) (*RepoAppsResponse, error)
 	// GetAppDetails returns application details by given path
-	GetAppDetails(ctx context.Context, in *RepoAppDetailsQuery, opts ...grpc.CallOption) (*repository.RepoAppDetailsResponse, error)
+	GetAppDetails(ctx context.Context, in *RepoAppDetailsQuery, opts ...grpc.CallOption) (*apiclient.RepoAppDetailsResponse, error)
 	// Create creates a repo
 	Create(ctx context.Context, in *RepoCreateRequest, opts ...grpc.CallOption) (*v1alpha1.Repository, error)
 	// Update updates a repo
 	Update(ctx context.Context, in *RepoUpdateRequest, opts ...grpc.CallOption) (*v1alpha1.Repository, error)
 	// Delete deletes a repo
 	Delete(ctx context.Context, in *RepoQuery, opts ...grpc.CallOption) (*RepoResponse, error)
+	// ValidateAccess validates access to a repository with given parameters
+	ValidateAccess(ctx context.Context, in *RepoAccessQuery, opts ...grpc.CallOption) (*RepoResponse, error)
 }
 
 type repositoryServiceClient struct {
@@ -525,8 +631,8 @@ func (c *repositoryServiceClient) ListApps(ctx context.Context, in *RepoAppsQuer
 	return out, nil
 }
 
-func (c *repositoryServiceClient) GetAppDetails(ctx context.Context, in *RepoAppDetailsQuery, opts ...grpc.CallOption) (*repository.RepoAppDetailsResponse, error) {
-	out := new(repository.RepoAppDetailsResponse)
+func (c *repositoryServiceClient) GetAppDetails(ctx context.Context, in *RepoAppDetailsQuery, opts ...grpc.CallOption) (*apiclient.RepoAppDetailsResponse, error) {
+	out := new(apiclient.RepoAppDetailsResponse)
 	err := c.cc.Invoke(ctx, "/repository.RepositoryService/GetAppDetails", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -561,6 +667,15 @@ func (c *repositoryServiceClient) Delete(ctx context.Context, in *RepoQuery, opt
 	return out, nil
 }
 
+func (c *repositoryServiceClient) ValidateAccess(ctx context.Context, in *RepoAccessQuery, opts ...grpc.CallOption) (*RepoResponse, error) {
+	out := new(RepoResponse)
+	err := c.cc.Invoke(ctx, "/repository.RepositoryService/ValidateAccess", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Server API for RepositoryService service
 
 type RepositoryServiceServer interface {
@@ -569,13 +684,15 @@ type RepositoryServiceServer interface {
 	// ListApps returns list of apps in the repo
 	ListApps(context.Context, *RepoAppsQuery) (*RepoAppsResponse, error)
 	// GetAppDetails returns application details by given path
-	GetAppDetails(context.Context, *RepoAppDetailsQuery) (*repository.RepoAppDetailsResponse, error)
+	GetAppDetails(context.Context, *RepoAppDetailsQuery) (*apiclient.RepoAppDetailsResponse, error)
 	// Create creates a repo
 	Create(context.Context, *RepoCreateRequest) (*v1alpha1.Repository, error)
 	// Update updates a repo
 	Update(context.Context, *RepoUpdateRequest) (*v1alpha1.Repository, error)
 	// Delete deletes a repo
 	Delete(context.Context, *RepoQuery) (*RepoResponse, error)
+	// ValidateAccess validates access to a repository with given parameters
+	ValidateAccess(context.Context, *RepoAccessQuery) (*RepoResponse, error)
 }
 
 func RegisterRepositoryServiceServer(s *grpc.Server, srv RepositoryServiceServer) {
@@ -690,6 +807,24 @@ func _RepositoryService_Delete_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RepositoryService_ValidateAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RepoAccessQuery)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RepositoryServiceServer).ValidateAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/repository.RepositoryService/ValidateAccess",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RepositoryServiceServer).ValidateAccess(ctx, req.(*RepoAccessQuery))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _RepositoryService_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "repository.RepositoryService",
 	HandlerType: (*RepositoryServiceServer)(nil),
@@ -717,6 +852,10 @@ var _RepositoryService_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _RepositoryService_Delete_Handler,
+		},
+		{
+			MethodName: "ValidateAccess",
+			Handler:    _RepositoryService_ValidateAccess_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -908,6 +1047,73 @@ func (m *RepoQuery) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
+func (m *RepoAccessQuery) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RepoAccessQuery) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Repo) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintRepository(dAtA, i, uint64(len(m.Repo)))
+		i += copy(dAtA[i:], m.Repo)
+	}
+	if len(m.Username) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintRepository(dAtA, i, uint64(len(m.Username)))
+		i += copy(dAtA[i:], m.Username)
+	}
+	if len(m.Password) > 0 {
+		dAtA[i] = 0x1a
+		i++
+		i = encodeVarintRepository(dAtA, i, uint64(len(m.Password)))
+		i += copy(dAtA[i:], m.Password)
+	}
+	if len(m.SshPrivateKey) > 0 {
+		dAtA[i] = 0x22
+		i++
+		i = encodeVarintRepository(dAtA, i, uint64(len(m.SshPrivateKey)))
+		i += copy(dAtA[i:], m.SshPrivateKey)
+	}
+	if m.Insecure {
+		dAtA[i] = 0x28
+		i++
+		if m.Insecure {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
+	}
+	if len(m.TlsClientCertData) > 0 {
+		dAtA[i] = 0x32
+		i++
+		i = encodeVarintRepository(dAtA, i, uint64(len(m.TlsClientCertData)))
+		i += copy(dAtA[i:], m.TlsClientCertData)
+	}
+	if len(m.TlsClientCertKey) > 0 {
+		dAtA[i] = 0x3a
+		i++
+		i = encodeVarintRepository(dAtA, i, uint64(len(m.TlsClientCertKey)))
+		i += copy(dAtA[i:], m.TlsClientCertKey)
+	}
+	if m.XXX_unrecognized != nil {
+		i += copy(dAtA[i:], m.XXX_unrecognized)
+	}
+	return i, nil
+}
+
 func (m *RepoResponse) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -1092,6 +1298,42 @@ func (m *RepoQuery) Size() (n int) {
 	var l int
 	_ = l
 	l = len(m.Repo)
+	if l > 0 {
+		n += 1 + l + sovRepository(uint64(l))
+	}
+	if m.XXX_unrecognized != nil {
+		n += len(m.XXX_unrecognized)
+	}
+	return n
+}
+
+func (m *RepoAccessQuery) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.Repo)
+	if l > 0 {
+		n += 1 + l + sovRepository(uint64(l))
+	}
+	l = len(m.Username)
+	if l > 0 {
+		n += 1 + l + sovRepository(uint64(l))
+	}
+	l = len(m.Password)
+	if l > 0 {
+		n += 1 + l + sovRepository(uint64(l))
+	}
+	l = len(m.SshPrivateKey)
+	if l > 0 {
+		n += 1 + l + sovRepository(uint64(l))
+	}
+	if m.Insecure {
+		n += 2
+	}
+	l = len(m.TlsClientCertData)
+	if l > 0 {
+		n += 1 + l + sovRepository(uint64(l))
+	}
+	l = len(m.TlsClientCertKey)
 	if l > 0 {
 		n += 1 + l + sovRepository(uint64(l))
 	}
@@ -1513,7 +1755,7 @@ func (m *RepoAppDetailsQuery) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Helm == nil {
-				m.Helm = &repository.HelmAppDetailsQuery{}
+				m.Helm = &apiclient.HelmAppDetailsQuery{}
 			}
 			if err := m.Helm.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
@@ -1546,7 +1788,7 @@ func (m *RepoAppDetailsQuery) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Ksonnet == nil {
-				m.Ksonnet = &repository.KsonnetAppDetailsQuery{}
+				m.Ksonnet = &apiclient.KsonnetAppDetailsQuery{}
 			}
 			if err := m.Ksonnet.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
@@ -1713,6 +1955,251 @@ func (m *RepoQuery) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Repo = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipRepository(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthRepository
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RepoAccessQuery) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowRepository
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RepoAccessQuery: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RepoAccessQuery: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Repo", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRepository
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthRepository
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Repo = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Username", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRepository
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthRepository
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Username = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Password", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRepository
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthRepository
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Password = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SshPrivateKey", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRepository
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthRepository
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.SshPrivateKey = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Insecure", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRepository
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Insecure = bool(v != 0)
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TlsClientCertData", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRepository
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthRepository
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.TlsClientCertData = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TlsClientCertKey", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRepository
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthRepository
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.TlsClientCertKey = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -2081,52 +2568,60 @@ var (
 )
 
 func init() {
-	proto.RegisterFile("server/repository/repository.proto", fileDescriptor_repository_085a58cd976bcc45)
+	proto.RegisterFile("server/repository/repository.proto", fileDescriptor_repository_3b37238e26fe0d6f)
 }
 
-var fileDescriptor_repository_085a58cd976bcc45 = []byte{
-	// 679 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x55, 0xc1, 0x6e, 0x13, 0x3d,
-	0x10, 0xd6, 0xb6, 0x69, 0xda, 0xba, 0x7f, 0x7f, 0x81, 0x5b, 0xaa, 0xb0, 0xa4, 0x6d, 0x64, 0x0e,
-	0xa4, 0x48, 0xac, 0x95, 0x94, 0x03, 0x42, 0x20, 0xd4, 0x52, 0x04, 0x15, 0x5c, 0x58, 0xc4, 0x01,
-	0x0e, 0xa0, 0xed, 0x66, 0xd8, 0x98, 0x6c, 0xd6, 0xc6, 0x76, 0x22, 0x55, 0x55, 0x2f, 0x48, 0xf4,
-	0x01, 0xe0, 0xce, 0x9d, 0x37, 0xe1, 0xc0, 0x01, 0x89, 0x17, 0x40, 0x15, 0x0f, 0x82, 0xec, 0xdd,
-	0x6c, 0xb6, 0x69, 0xda, 0x22, 0x54, 0x71, 0x9b, 0x1d, 0xcf, 0x37, 0xdf, 0x67, 0xcf, 0xe7, 0x35,
-	0x22, 0x0a, 0x64, 0x1f, 0x24, 0x95, 0x20, 0xb8, 0x62, 0x9a, 0xcb, 0xdd, 0x42, 0xe8, 0x09, 0xc9,
-	0x35, 0xc7, 0x68, 0x98, 0x71, 0x17, 0x23, 0x1e, 0x71, 0x9b, 0xa6, 0x26, 0x4a, 0x2b, 0xdc, 0x6a,
-	0xc4, 0x79, 0x14, 0x03, 0x0d, 0x04, 0xa3, 0x41, 0x92, 0x70, 0x1d, 0x68, 0xc6, 0x13, 0x95, 0xad,
-	0x92, 0xce, 0x2d, 0xe5, 0x31, 0x6e, 0x57, 0x43, 0x2e, 0x81, 0xf6, 0x1b, 0x34, 0x82, 0x04, 0x64,
-	0xa0, 0xa1, 0x95, 0xd5, 0x6c, 0x47, 0x4c, 0xb7, 0x7b, 0x3b, 0x5e, 0xc8, 0xbb, 0x34, 0x90, 0x96,
-	0xe2, 0xad, 0x0d, 0x6e, 0x84, 0x2d, 0x2a, 0x3a, 0x91, 0x01, 0x2b, 0x1a, 0x08, 0x11, 0xb3, 0xd0,
-	0x36, 0xa7, 0xfd, 0x46, 0x10, 0x8b, 0x76, 0x70, 0xbc, 0xd5, 0xe6, 0x69, 0xad, 0xec, 0x56, 0xce,
-	0xdc, 0x32, 0xb9, 0x87, 0xe6, 0x7d, 0x10, 0x7c, 0x43, 0x08, 0xf5, 0xb4, 0x07, 0x72, 0x17, 0x63,
-	0x54, 0x32, 0x45, 0x15, 0xa7, 0xe6, 0xd4, 0x67, 0x7d, 0x1b, 0x63, 0x17, 0xcd, 0x48, 0xe8, 0x33,
-	0xc5, 0x78, 0x52, 0x99, 0xb0, 0xf9, 0xfc, 0x9b, 0x34, 0xd0, 0xf4, 0x86, 0x10, 0xdb, 0xc9, 0x1b,
-	0x6e, 0xa0, 0x7a, 0x57, 0xc0, 0x00, 0x6a, 0x62, 0x93, 0x13, 0x81, 0x6e, 0x67, 0x30, 0x1b, 0x93,
-	0x6f, 0x0e, 0x5a, 0xc8, 0x48, 0xb7, 0x40, 0x07, 0x2c, 0xfe, 0x3b, 0xea, 0xbc, 0xf7, 0xe4, 0xb0,
-	0x37, 0x5e, 0x47, 0xa5, 0x36, 0xc4, 0xdd, 0x4a, 0xa9, 0xe6, 0xd4, 0xe7, 0x9a, 0xab, 0x5e, 0x61,
-	0xc3, 0x8f, 0x20, 0xee, 0x8e, 0x50, 0xfa, 0xb6, 0x18, 0xdf, 0x41, 0xd3, 0x1d, 0xc5, 0x93, 0x04,
-	0x74, 0x65, 0xca, 0xe2, 0x48, 0x11, 0xf7, 0x38, 0x5d, 0x1a, 0x85, 0x0e, 0x20, 0xe4, 0x2e, 0xba,
-	0x30, 0x38, 0x42, 0x1f, 0x94, 0xe0, 0x89, 0x02, 0xbc, 0x86, 0xa6, 0x98, 0x86, 0xae, 0xaa, 0x38,
-	0xb5, 0xc9, 0xfa, 0x5c, 0x73, 0xa1, 0xd8, 0x2f, 0x3b, 0x2e, 0x3f, 0xad, 0x20, 0xab, 0x68, 0xd6,
-	0xc0, 0x4f, 0x3c, 0x02, 0xf2, 0x3f, 0xfa, 0xcf, 0x14, 0x0c, 0x7a, 0x93, 0x03, 0x07, 0x5d, 0x34,
-	0x89, 0xfb, 0x12, 0x02, 0x0d, 0x3e, 0xbc, 0xeb, 0x81, 0xd2, 0xf8, 0x45, 0x01, 0x39, 0xd7, 0x7c,
-	0xe0, 0x0d, 0xbd, 0xe1, 0x0d, 0xbc, 0x61, 0x83, 0xd7, 0x61, 0xcb, 0x13, 0x9d, 0xc8, 0x33, 0x36,
-	0xf3, 0x0a, 0x36, 0xf3, 0x06, 0x36, 0xf3, 0xfc, 0x5c, 0x6a, 0x36, 0x83, 0x25, 0x54, 0xee, 0x09,
-	0x05, 0x52, 0xdb, 0x09, 0xcc, 0xf8, 0xd9, 0x17, 0x49, 0x52, 0x1d, 0xcf, 0x45, 0xeb, 0x9f, 0xe8,
-	0x68, 0x7e, 0x29, 0xa7, 0x84, 0x69, 0xf2, 0x19, 0xc8, 0x3e, 0x0b, 0x01, 0x1f, 0x38, 0xa8, 0xf4,
-	0x84, 0x29, 0x8d, 0x2f, 0x15, 0x0f, 0x39, 0x3f, 0x52, 0x77, 0xfb, 0x5c, 0x24, 0x18, 0x06, 0x52,
-	0x7d, 0xff, 0xe3, 0xd7, 0xa7, 0x89, 0x25, 0xbc, 0x68, 0x6f, 0x78, 0xbf, 0x31, 0xbc, 0x4e, 0x0c,
-	0x14, 0xee, 0xa2, 0x19, 0x53, 0x65, 0x7c, 0x80, 0x2f, 0x8f, 0x6a, 0xc9, 0x2f, 0x98, 0x5b, 0x1d,
-	0xb7, 0x94, 0x0f, 0xb7, 0x6e, 0x29, 0x08, 0xae, 0x8d, 0xa3, 0xa0, 0x7b, 0xe6, 0x6b, 0xdf, 0xfc,
-	0x1d, 0x14, 0xfe, 0xe0, 0xa0, 0xf9, 0x87, 0x45, 0x5b, 0xe2, 0xd5, 0x31, 0x9d, 0x8b, 0x96, 0x75,
-	0xc9, 0xc9, 0x05, 0xb9, 0x00, 0x6a, 0x05, 0xac, 0xe1, 0x6b, 0x67, 0x09, 0xa0, 0x7b, 0xe6, 0xc2,
-	0xed, 0xe3, 0x8f, 0x0e, 0x2a, 0xa7, 0x56, 0xc4, 0xcb, 0xa3, 0xfd, 0x8f, 0x58, 0xd4, 0x3d, 0x1f,
-	0x33, 0x10, 0x62, 0x15, 0x56, 0xc9, 0xd8, 0x29, 0xdc, 0x4e, 0x2d, 0xfb, 0xd9, 0x41, 0xe5, 0xd4,
-	0x97, 0xc7, 0x45, 0x1d, 0xf1, 0xeb, 0x79, 0x89, 0xf2, 0xac, 0xa8, 0xba, 0x7b, 0xca, 0xdc, 0xac,
-	0x8e, 0xfd, 0x4c, 0xe0, 0x2b, 0x54, 0xde, 0x82, 0x18, 0x34, 0x9c, 0x64, 0xdb, 0xca, 0x68, 0x3a,
-	0x9f, 0xd0, 0x55, 0x4b, 0xb5, 0x7c, 0xfd, 0xca, 0x29, 0x13, 0xda, 0xdc, 0xfc, 0x7a, 0xb8, 0xe2,
-	0x7c, 0x3f, 0x5c, 0x71, 0x7e, 0x1e, 0xae, 0x38, 0x2f, 0x6f, 0xfe, 0xc1, 0xa3, 0x13, 0xc6, 0x0c,
-	0x12, 0x5d, 0x78, 0x21, 0x76, 0xca, 0xf6, 0x89, 0x58, 0xff, 0x1d, 0x00, 0x00, 0xff, 0xff, 0x24,
-	0xdc, 0xe6, 0x9b, 0x3b, 0x07, 0x00, 0x00,
+var fileDescriptor_repository_3b37238e26fe0d6f = []byte{
+	// 815 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x55, 0xcd, 0x6e, 0x23, 0x45,
+	0x10, 0xd6, 0xec, 0x7a, 0x6d, 0xa7, 0x43, 0x96, 0xdd, 0xde, 0x65, 0x65, 0x66, 0xbd, 0x89, 0xd5,
+	0xac, 0x84, 0x77, 0x15, 0x66, 0x64, 0x87, 0x03, 0x42, 0x20, 0x94, 0x1f, 0x04, 0x51, 0x38, 0xc0,
+	0x20, 0x90, 0xe0, 0x00, 0xea, 0x8c, 0x8b, 0x71, 0xe3, 0xf1, 0x74, 0xd3, 0xdd, 0x1e, 0x64, 0x45,
+	0xb9, 0x20, 0x91, 0x07, 0x80, 0x3b, 0x47, 0x9e, 0x85, 0x03, 0x07, 0x24, 0x5e, 0x00, 0x45, 0xbc,
+	0x04, 0x37, 0xd4, 0x3d, 0x3f, 0x1e, 0xff, 0xc4, 0x41, 0x28, 0xda, 0x5b, 0x75, 0x75, 0x55, 0x7d,
+	0x5f, 0xd7, 0x5f, 0x23, 0xa2, 0x40, 0xa6, 0x20, 0x7d, 0x09, 0x82, 0x2b, 0xa6, 0xb9, 0x9c, 0x56,
+	0x44, 0x4f, 0x48, 0xae, 0x39, 0x46, 0x33, 0x8d, 0xfb, 0x30, 0xe2, 0x11, 0xb7, 0x6a, 0xdf, 0x48,
+	0x99, 0x85, 0xdb, 0x8e, 0x38, 0x8f, 0x62, 0xf0, 0xa9, 0x60, 0x3e, 0x4d, 0x12, 0xae, 0xa9, 0x66,
+	0x3c, 0x51, 0xf9, 0x2d, 0x19, 0xbd, 0xa5, 0x3c, 0xc6, 0xed, 0x6d, 0xc8, 0x25, 0xf8, 0x69, 0xcf,
+	0x8f, 0x20, 0x01, 0x49, 0x35, 0x0c, 0x72, 0x9b, 0xe3, 0x88, 0xe9, 0xe1, 0xe4, 0xd4, 0x0b, 0xf9,
+	0xd8, 0xa7, 0xd2, 0x42, 0x7c, 0x6b, 0x85, 0x37, 0xc2, 0x81, 0x2f, 0x46, 0x91, 0x71, 0x56, 0x3e,
+	0x15, 0x22, 0x66, 0xa1, 0x0d, 0xee, 0xa7, 0x3d, 0x1a, 0x8b, 0x21, 0x5d, 0x0e, 0x75, 0xb0, 0x2e,
+	0x94, 0x7d, 0xca, 0xb5, 0x4f, 0x26, 0xef, 0xa1, 0xad, 0x00, 0x04, 0xdf, 0x17, 0x42, 0x7d, 0x32,
+	0x01, 0x39, 0xc5, 0x18, 0xd5, 0x8c, 0x51, 0xcb, 0xe9, 0x38, 0xdd, 0x8d, 0xc0, 0xca, 0xd8, 0x45,
+	0x4d, 0x09, 0x29, 0x53, 0x8c, 0x27, 0xad, 0x5b, 0x56, 0x5f, 0x9e, 0x49, 0x0f, 0x35, 0xf6, 0x85,
+	0x38, 0x4e, 0xbe, 0xe1, 0xc6, 0x55, 0x4f, 0x05, 0x14, 0xae, 0x46, 0x36, 0x3a, 0x41, 0xf5, 0x30,
+	0x77, 0xb3, 0x32, 0xf9, 0xdd, 0x41, 0x0f, 0x72, 0xd0, 0x23, 0xd0, 0x94, 0xc5, 0xff, 0x0f, 0xba,
+	0x8c, 0x7d, 0x7b, 0x16, 0x1b, 0xef, 0xa1, 0xda, 0x10, 0xe2, 0x71, 0xab, 0xd6, 0x71, 0xba, 0x9b,
+	0xfd, 0x1d, 0xaf, 0xf2, 0xe0, 0x0f, 0x21, 0x1e, 0x2f, 0x40, 0x06, 0xd6, 0x18, 0xbf, 0x83, 0x1a,
+	0x23, 0xc5, 0x93, 0x04, 0x74, 0xeb, 0x8e, 0xf5, 0x23, 0x55, 0xbf, 0x93, 0xec, 0x6a, 0xd1, 0xb5,
+	0x70, 0x21, 0xef, 0xa2, 0x7b, 0x45, 0x0a, 0x03, 0x50, 0x82, 0x27, 0x0a, 0xf0, 0x33, 0x74, 0x87,
+	0x69, 0x18, 0xab, 0x96, 0xd3, 0xb9, 0xdd, 0xdd, 0xec, 0x3f, 0xa8, 0xc6, 0xcb, 0xd3, 0x15, 0x64,
+	0x16, 0x64, 0x07, 0x6d, 0x18, 0xf7, 0x2b, 0x53, 0x40, 0xfe, 0x71, 0xd0, 0xcb, 0x16, 0x20, 0x0c,
+	0x41, 0xad, 0x4f, 0xd5, 0x44, 0x81, 0x4c, 0xe8, 0x18, 0x8a, 0x54, 0x15, 0x67, 0x73, 0x27, 0xa8,
+	0x52, 0xdf, 0x73, 0x39, 0xc8, 0xd3, 0x55, 0x9e, 0xf1, 0x53, 0xb4, 0xa5, 0xd4, 0xf0, 0x63, 0xc9,
+	0x52, 0xaa, 0xe1, 0x04, 0xa6, 0x36, 0x77, 0x1b, 0xc1, 0xbc, 0xd2, 0x44, 0x60, 0x89, 0x82, 0x70,
+	0x22, 0xc1, 0x26, 0xa9, 0x19, 0x94, 0x67, 0xbc, 0x8b, 0xee, 0xeb, 0x58, 0x1d, 0xc6, 0x0c, 0x12,
+	0x7d, 0x08, 0x52, 0x1f, 0x51, 0x4d, 0x5b, 0x75, 0x1b, 0x65, 0xf9, 0x02, 0x3f, 0x47, 0xf7, 0xe6,
+	0x94, 0x06, 0xb2, 0x61, 0x8d, 0x97, 0xf4, 0xe4, 0x2e, 0x7a, 0xc9, 0x3c, 0xbd, 0xc8, 0x2b, 0xb9,
+	0x70, 0xd0, 0x7d, 0xa3, 0x38, 0x94, 0x40, 0x35, 0x04, 0xf0, 0xdd, 0x04, 0x94, 0xc6, 0x5f, 0x54,
+	0xb2, 0xb1, 0xd9, 0x7f, 0xdf, 0x9b, 0xcd, 0x85, 0x57, 0xcc, 0x85, 0x15, 0xbe, 0x0e, 0x07, 0x9e,
+	0x18, 0x45, 0x9e, 0x19, 0x31, 0xaf, 0x32, 0x62, 0x5e, 0x31, 0x62, 0x5e, 0x50, 0x96, 0x29, 0x4f,
+	0xea, 0x23, 0x54, 0x9f, 0x08, 0x05, 0x52, 0xdb, 0x94, 0x36, 0x83, 0xfc, 0x44, 0x92, 0x8c, 0xc7,
+	0x67, 0x62, 0xf0, 0x42, 0x78, 0xf4, 0x7f, 0x6d, 0x64, 0x80, 0x99, 0xf2, 0x53, 0x90, 0x29, 0x0b,
+	0x01, 0x5f, 0x38, 0xa8, 0xf6, 0x11, 0x53, 0x1a, 0xbf, 0x52, 0x6d, 0xb0, 0xb2, 0x9d, 0xdc, 0xe3,
+	0x1b, 0xa1, 0x60, 0x10, 0x48, 0xfb, 0x87, 0x3f, 0xff, 0xfe, 0xf9, 0xd6, 0x23, 0xfc, 0xd0, 0x6e,
+	0xb7, 0xb4, 0x37, 0x5b, 0x25, 0x0c, 0x14, 0x1e, 0xa3, 0xa6, 0xb1, 0x32, 0x33, 0x80, 0x5f, 0x5d,
+	0xe4, 0x52, 0x2e, 0x17, 0xb7, 0xbd, 0xea, 0xaa, 0x2c, 0x6e, 0xd7, 0x42, 0x10, 0xdc, 0x59, 0x05,
+	0xe1, 0x9f, 0x99, 0xd3, 0xb9, 0xd9, 0x8c, 0x0a, 0xff, 0xe8, 0xa0, 0xad, 0x0f, 0xaa, 0x23, 0x89,
+	0x77, 0x56, 0x44, 0xae, 0x8e, 0xab, 0x4b, 0xae, 0x36, 0x28, 0x09, 0xf8, 0x96, 0xc0, 0x33, 0xfc,
+	0xfa, 0x75, 0x04, 0xfc, 0x33, 0xb3, 0x6c, 0xce, 0xf1, 0x4f, 0x0e, 0xaa, 0x67, 0xad, 0x88, 0x9f,
+	0x2c, 0xc6, 0x9f, 0x6b, 0x51, 0xf7, 0x66, 0x9a, 0x81, 0x10, 0xcb, 0xb0, 0x4d, 0x56, 0x56, 0xe1,
+	0xed, 0xac, 0x65, 0x7f, 0x71, 0x50, 0x3d, 0xeb, 0xcb, 0x65, 0x52, 0x73, 0xfd, 0x7a, 0x53, 0xa4,
+	0x3c, 0x4b, 0xaa, 0xeb, 0xae, 0xa9, 0x9b, 0xe5, 0x71, 0x9e, 0x13, 0xfc, 0x0a, 0xd5, 0x8f, 0x20,
+	0x06, 0x0d, 0x57, 0xb5, 0x6d, 0x6b, 0x51, 0x5d, 0x56, 0xe8, 0x35, 0x0b, 0xf5, 0xe4, 0xf9, 0xe3,
+	0x35, 0x15, 0xc2, 0x67, 0xe8, 0xee, 0xe7, 0x34, 0x66, 0xe6, 0xa5, 0xd9, 0xce, 0xc4, 0x8f, 0x97,
+	0x8a, 0x3f, 0xdb, 0xa5, 0x6b, 0xd0, 0xfa, 0x16, 0x6d, 0x97, 0x3c, 0x5d, 0xd7, 0x0f, 0x69, 0x0e,
+	0x95, 0x3d, 0xee, 0xe0, 0xe0, 0xb7, 0xcb, 0x6d, 0xe7, 0x8f, 0xcb, 0x6d, 0xe7, 0xaf, 0xcb, 0x6d,
+	0xe7, 0xcb, 0x37, 0xff, 0xc3, 0x6f, 0x1f, 0xda, 0x8d, 0x57, 0xf9, 0x9a, 0x4f, 0xeb, 0xf6, 0x6f,
+	0xde, 0xfb, 0x37, 0x00, 0x00, 0xff, 0xff, 0x6c, 0xda, 0x10, 0xbf, 0xb4, 0x08, 0x00, 0x00,
 }

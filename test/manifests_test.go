@@ -14,9 +14,9 @@ import (
 // TestBuildManifests makes sure we are consistent in naming, and all kustomization.yamls are buildable
 func TestBuildManifests(t *testing.T) {
 
-	out, err := argoexec.RunCommand("kustomize", "version")
+	out, err := argoexec.RunCommand("kustomize", argoexec.CmdOpts{}, "version")
 	assert.NoError(t, err)
-	assert.True(t, Contains(out, "KustomizeVersion:2") || Contains(out, "KustomizeVersion:v2"), "kustomize should be version 2")
+	assert.True(t, Contains(out, "KustomizeVersion:3") || Contains(out, "KustomizeVersion:v3"), "kustomize should be version 3")
 
 	err = filepath.Walk("../manifests", func(path string, f os.FileInfo, err error) error {
 		if err != nil {
@@ -35,7 +35,7 @@ func TestBuildManifests(t *testing.T) {
 			return nil
 		}
 		dirName := filepath.Dir(path)
-		_, err = argoexec.RunCommand("kustomize", "build", dirName)
+		_, err = argoexec.RunCommand("kustomize", argoexec.CmdOpts{}, "build", dirName)
 		return err
 	})
 	assert.NoError(t, err)

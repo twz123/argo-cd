@@ -1,12 +1,19 @@
+ARG BASE_IMAGE=debian:9.5-slim
 ####################################################################################################
 # Builder image
 # Initial stage which pulls prepares build dependencies and CLI tooling we need for our final image
 # Also used as the image in CI jobs so needs all dependencies
 ####################################################################################################
-FROM golang:1.11.4 as builder
+FROM golang:1.12.6 as builder
+
+RUN echo 'deb http://deb.debian.org/debian stretch-backports main' >> /etc/apt/sources.list
 
 RUN apt-get update && apt-get install -y \
+    openssh-server \
+    nginx \
+    fcgiwrap \
     git \
+    git-lfs \
     make \
     wget \
     gcc \
@@ -16,23 +23,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /tmp
 
-# Install docker
-ENV DOCKER_CHANNEL stable
-ENV DOCKER_VERSION 18.09.1
-RUN wget -O docker.tgz "https://download.docker.com/linux/static/${DOCKER_CHANNEL}/x86_64/docker-${DOCKER_VERSION}.tgz" && \
-    tar --extract --file docker.tgz --strip-components 1 --directory /usr/local/bin/ && \
-    rm docker.tgz
-
 # Install dep
 ENV DEP_VERSION=0.5.0
 RUN wget https://github.com/golang/dep/releases/download/v${DEP_VERSION}/dep-linux-amd64 -O /usr/local/bin/dep && \
     chmod +x /usr/local/bin/dep
-
-# Install gometalinter
-ENV GOMETALINTER_VERSION=2.0.12
-RUN curl -sLo- https://github.com/alecthomas/gometalinter/releases/download/v${GOMETALINTER_VERSION}/gometalinter-${GOMETALINTER_VERSION}-linux-amd64.tar.gz | \
-    tar -xzC "$GOPATH/bin" --exclude COPYING --exclude README.md --strip-components 1 -f- && \
-    ln -s $GOPATH/bin/gometalinter $GOPATH/bin/gometalinter.v2
 
 # Install packr
 ENV PACKR_VERSION=1.21.9
@@ -61,14 +55,7 @@ RUN wget https://storage.googleapis.com/kubernetes-helm/helm-v${HELM_VERSION}-li
     mv /tmp/linux-amd64/helm /usr/local/bin/helm && \
     helm version --client
 
-# Install kustomize
-ENV KUSTOMIZE1_VERSION=1.0.11
-RUN curl -L -o /usr/local/bin/kustomize1 https://github.com/kubernetes-sigs/kustomize/releases/download/v${KUSTOMIZE1_VERSION}/kustomize_${KUSTOMIZE1_VERSION}_linux_amd64 && \
-    chmod +x /usr/local/bin/kustomize1 && \
-    kustomize1 version
-
-
-ENV KUSTOMIZE_VERSION=2.0.3
+ENV KUSTOMIZE_VERSION=3.1.0
 RUN curl -L -o /usr/local/bin/kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/v${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64 && \
     chmod +x /usr/local/bin/kustomize && \
     kustomize version
@@ -78,40 +65,37 @@ ENV AWS_IAM_AUTHENTICATOR_VERSION=0.4.0-alpha.1
 RUN curl -L -o /usr/local/bin/aws-iam-authenticator https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/${AWS_IAM_AUTHENTICATOR_VERSION}/aws-iam-authenticator_${AWS_IAM_AUTHENTICATOR_VERSION}_linux_amd64 && \
     chmod +x /usr/local/bin/aws-iam-authenticator
 
-# Install golangci-lint
-RUN wget https://install.goreleaser.com/github.com/golangci/golangci-lint.sh  && \
-    chmod +x ./golangci-lint.sh && \
-    ./golangci-lint.sh -b $GOPATH/bin && \
-    golangci-lint linters
-
-COPY .golangci.yml ${GOPATH}/src/dummy/.golangci.yml
-
-RUN cd ${GOPATH}/src/dummy && \
-    touch dummy.go \
-    golangci-lint run
-
 ####################################################################################################
 # Argo CD Base - used as the base for both the release and dev argocd images
 ####################################################################################################
-FROM debian:9.5-slim as argocd-base
+FROM $BASE_IMAGE as argocd-base
+
+USER root
+
+RUN echo 'deb http://deb.debian.org/debian stretch-backports main' >> /etc/apt/sources.list
 
 RUN groupadd -g 999 argocd && \
     useradd -r -u 999 -g argocd argocd && \
     mkdir -p /home/argocd && \
     chown argocd:argocd /home/argocd && \
     apt-get update && \
-    apt-get install -y git && \
+    apt-get install -y git git-lfs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-COPY hack/ssh_known_hosts /etc/ssh/ssh_known_hosts
 COPY hack/git-ask-pass.sh /usr/local/bin/git-ask-pass.sh
 COPY --from=builder /usr/local/bin/ks /usr/local/bin/ks
 COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
 COPY --from=builder /usr/local/bin/kubectl /usr/local/bin/kubectl
-COPY --from=builder /usr/local/bin/kustomize1 /usr/local/bin/kustomize1
 COPY --from=builder /usr/local/bin/kustomize /usr/local/bin/kustomize
 COPY --from=builder /usr/local/bin/aws-iam-authenticator /usr/local/bin/aws-iam-authenticator
+
+# support for mounting configuration from a configmap
+RUN mkdir -p /app/config/ssh && \
+    touch /app/config/ssh/ssh_known_hosts && \
+    ln -s /app/config/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts 
+
+RUN mkdir -p /app/config/tls
 
 # workaround ksonnet issue https://github.com/ksonnet/ksonnet/issues/298
 ENV USER=argocd
@@ -119,11 +103,26 @@ ENV USER=argocd
 USER argocd
 WORKDIR /home/argocd
 
+####################################################################################################
+# Argo CD UI stage
+####################################################################################################
+FROM node:11.15.0 as argocd-ui
+
+WORKDIR /src
+ADD ["ui/package.json", "ui/yarn.lock", "./"]
+
+RUN yarn install
+
+ADD ["ui/", "."]
+
+ARG ARGO_VERSION=latest
+ENV ARGO_VERSION=$ARGO_VERSION
+RUN NODE_ENV='production' yarn build
 
 ####################################################################################################
 # Argo CD Build stage which performs the actual build of Argo CD binaries
 ####################################################################################################
-FROM golang:1.11.4 as argocd-build
+FROM golang:1.12.6 as argocd-build
 
 COPY --from=builder /usr/local/bin/dep /usr/local/bin/dep
 COPY --from=builder /usr/local/bin/packr /usr/local/bin/packr
@@ -150,3 +149,5 @@ RUN make cli server controller repo-server argocd-util && \
 ####################################################################################################
 FROM argocd-base
 COPY --from=argocd-build /go/src/github.com/argoproj/argo-cd/dist/argocd* /usr/local/bin/
+COPY --from=argocd-ui ./src/dist/app /shared/app
+

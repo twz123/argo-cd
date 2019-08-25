@@ -3,20 +3,16 @@ package git
 import (
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-)
 
-// TODO: move this into shared test package after resolving import cycle
-const (
-	// This is a throwaway gitlab test account/repo with a read-only personal access token for the
-	// purposes of testing private git repos
-	PrivateGitRepo     = "https://gitlab.com/argo-cd-test/test-apps.git"
-	PrivateGitUsername = "blah"
-	PrivateGitPassword = "B5sBDeoqAVUouoHkrovy"
+	"github.com/argoproj/argo-cd/test/fixture/log"
+	"github.com/argoproj/argo-cd/test/fixture/path"
+	"github.com/argoproj/argo-cd/test/fixture/test"
 )
 
 func TestIsCommitSHA(t *testing.T) {
@@ -113,8 +109,72 @@ func TestSameURL(t *testing.T) {
 	}
 }
 
+func TestCustomHTTPClient(t *testing.T) {
+	certFile, err := filepath.Abs("../../test/fixture/certs/argocd-test-client.crt")
+	assert.NoError(t, err)
+	assert.NotEqual(t, "", certFile)
+
+	keyFile, err := filepath.Abs("../../test/fixture/certs/argocd-test-client.key")
+	assert.NoError(t, err)
+	assert.NotEqual(t, "", keyFile)
+
+	certData, err := ioutil.ReadFile(certFile)
+	assert.NoError(t, err)
+	assert.NotEqual(t, "", string(certData))
+
+	keyData, err := ioutil.ReadFile(keyFile)
+	assert.NoError(t, err)
+	assert.NotEqual(t, "", string(keyData))
+
+	// Get HTTPSCreds with client cert creds specified, and insecure connection
+	creds := NewHTTPSCreds("test", "test", string(certData), string(keyData), false)
+	client := GetRepoHTTPClient("https://localhost:9443/foo/bar", false, creds)
+	assert.NotNil(t, client)
+	assert.NotNil(t, client.Transport)
+	if client.Transport != nil {
+		httpClient := client.Transport.(*http.Transport)
+		assert.NotNil(t, httpClient.TLSClientConfig)
+
+		assert.Equal(t, false, httpClient.TLSClientConfig.InsecureSkipVerify)
+
+		assert.NotNil(t, httpClient.TLSClientConfig.GetClientCertificate)
+		if httpClient.TLSClientConfig.GetClientCertificate != nil {
+			cert, err := httpClient.TLSClientConfig.GetClientCertificate(nil)
+			assert.NoError(t, err)
+			if err == nil {
+				assert.NotNil(t, cert)
+				assert.NotEqual(t, 0, len(cert.Certificate))
+				assert.NotNil(t, cert.PrivateKey)
+			}
+		}
+	}
+
+	// Get HTTPSCreds without client cert creds, but insecure connection
+	creds = NewHTTPSCreds("test", "test", "", "", true)
+	client = GetRepoHTTPClient("https://localhost:9443/foo/bar", true, creds)
+	assert.NotNil(t, client)
+	assert.NotNil(t, client.Transport)
+	if client.Transport != nil {
+		httpClient := client.Transport.(*http.Transport)
+		assert.NotNil(t, httpClient.TLSClientConfig)
+
+		assert.Equal(t, true, httpClient.TLSClientConfig.InsecureSkipVerify)
+
+		assert.NotNil(t, httpClient.TLSClientConfig.GetClientCertificate)
+		if httpClient.TLSClientConfig.GetClientCertificate != nil {
+			cert, err := httpClient.TLSClientConfig.GetClientCertificate(nil)
+			assert.NoError(t, err)
+			if err == nil {
+				assert.NotNil(t, cert)
+				assert.Equal(t, 0, len(cert.Certificate))
+				assert.Nil(t, cert.PrivateKey)
+			}
+		}
+	}
+}
+
 func TestLsRemote(t *testing.T) {
-	clnt, err := NewFactory().NewClient("https://github.com/argoproj/argo-cd.git", "/tmp", "", "", "", false)
+	clnt, err := NewFactory().NewClient("https://github.com/argoproj/argo-cd.git", "/tmp", NopCreds{}, false, false)
 	assert.NoError(t, err)
 	xpass := []string{
 		"HEAD",
@@ -146,62 +206,107 @@ func TestLsRemote(t *testing.T) {
 	}
 }
 
-func TestGitClient(t *testing.T) {
-	testRepos := []string{
-		"https://github.com/argoproj/argocd-example-apps",
-		"https://jsuen0437@dev.azure.com/jsuen0437/jsuen/_git/jsuen",
+// Running this test requires git-lfs to be installed on your machine.
+func TestLFSClient(t *testing.T) {
+
+	// temporary disable LFS test
+	// TODO(alexmt): dockerize tests in and enabled it
+	t.Skip()
+
+	tempDir, err := ioutil.TempDir("", "git-client-lfs-test-")
+	assert.NoError(t, err)
+	if err == nil {
+		defer func() { _ = os.RemoveAll(tempDir) }()
 	}
-	for _, repo := range testRepos {
+
+	client, err := NewFactory().NewClient("https://github.com/argoproj-labs/argocd-testrepo-lfs", tempDir, NopCreds{}, false, true)
+	assert.NoError(t, err)
+
+	commitSHA, err := client.LsRemote("HEAD")
+	assert.NoError(t, err)
+	assert.NotEqual(t, "", commitSHA)
+
+	err = client.Init()
+	assert.NoError(t, err)
+
+	err = client.Fetch()
+	assert.NoError(t, err)
+
+	err = client.Checkout(commitSHA)
+	assert.NoError(t, err)
+
+	largeFiles, err := client.LsLargeFiles()
+	assert.NoError(t, err)
+	assert.Equal(t, 3, len(largeFiles))
+
+	fileHandle, err := os.Open(fmt.Sprintf("%s/test3.yaml", tempDir))
+	assert.NoError(t, err)
+	if err == nil {
+		defer fileHandle.Close()
+		text, err := ioutil.ReadAll(fileHandle)
+		assert.NoError(t, err)
+		if err == nil {
+			assert.Equal(t, "This is not a YAML, sorry.\n", string(text))
+		}
+	}
+}
+
+func TestNewFactory(t *testing.T) {
+	addBinDirToPath := path.NewBinDirToPath()
+	defer addBinDirToPath.Close()
+	closer := log.Debug()
+	defer closer()
+
+	type args struct {
+		url                   string
+		insecureIgnoreHostKey bool
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"Github", args{url: "https://github.com/argoproj/argocd-example-apps"}},
+		{"Azure", args{url: "https://jsuen0437@dev.azure.com/jsuen0437/jsuen/_git/jsuen"}},
+	}
+	for _, tt := range tests {
+
+		if tt.name == "PrivateSSHRepo" {
+			test.Flaky(t)
+		}
+
 		dirName, err := ioutil.TempDir("", "git-client-test-")
 		assert.NoError(t, err)
 		defer func() { _ = os.RemoveAll(dirName) }()
 
-		clnt, err := NewFactory().NewClient(repo, dirName, "", "", "", false)
+		client, err := NewFactory().NewClient(tt.args.url, dirName, NopCreds{}, tt.args.insecureIgnoreHostKey, false)
+		assert.NoError(t, err)
+		commitSHA, err := client.LsRemote("HEAD")
 		assert.NoError(t, err)
 
-		testGitClient(t, clnt)
+		err = client.Init()
+		assert.NoError(t, err)
+
+		err = client.Fetch()
+		assert.NoError(t, err)
+
+		// Do a second fetch to make sure we can treat `already up-to-date` error as not an error
+		err = client.Fetch()
+		assert.NoError(t, err)
+
+		err = client.Checkout(commitSHA)
+		assert.NoError(t, err)
+
+		revisionMetadata, err := client.RevisionMetadata(commitSHA)
+		assert.NoError(t, err)
+		assert.NotNil(t, revisionMetadata)
+		assert.Regexp(t, "^.*<.*>$", revisionMetadata.Author)
+		assert.Len(t, revisionMetadata.Tags, 0)
+		assert.NotEmpty(t, revisionMetadata.Date)
+		assert.NotEmpty(t, revisionMetadata.Message)
+
+		commitSHA2, err := client.CommitSHA()
+		assert.NoError(t, err)
+
+		assert.Equal(t, commitSHA, commitSHA2)
 	}
-}
-
-// TestPrivateGitRepo tests the ability to operate on a private git repo.
-func TestPrivateGitRepo(t *testing.T) {
-	// add the hack path which has the git-ask-pass.sh shell script
-	osPath := os.Getenv("PATH")
-	hackPath, err := filepath.Abs("../../hack")
-	assert.NoError(t, err)
-	err = os.Setenv("PATH", fmt.Sprintf("%s:%s", osPath, hackPath))
-	assert.NoError(t, err)
-	defer func() { _ = os.Setenv("PATH", osPath) }()
-
-	dirName, err := ioutil.TempDir("", "git-client-test-")
-	assert.NoError(t, err)
-	defer func() { _ = os.RemoveAll(dirName) }()
-
-	clnt, err := NewFactory().NewClient(PrivateGitRepo, dirName, PrivateGitUsername, PrivateGitPassword, "", false)
-	assert.NoError(t, err)
-
-	testGitClient(t, clnt)
-}
-
-func testGitClient(t *testing.T, clnt Client) {
-	commitSHA, err := clnt.LsRemote("HEAD")
-	assert.NoError(t, err)
-
-	err = clnt.Init()
-	assert.NoError(t, err)
-
-	err = clnt.Fetch()
-	assert.NoError(t, err)
-
-	// Do a second fetch to make sure we can treat `already up-to-date` error as not an error
-	err = clnt.Fetch()
-	assert.NoError(t, err)
-
-	err = clnt.Checkout(commitSHA)
-	assert.NoError(t, err)
-
-	commitSHA2, err := clnt.CommitSHA()
-	assert.NoError(t, err)
-
-	assert.Equal(t, commitSHA, commitSHA2)
 }

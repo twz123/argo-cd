@@ -23,6 +23,8 @@ export interface ResourceTreeNode extends models.ResourceNode {
     health?: models.HealthStatus;
     hook?: boolean;
     root?: ResourceTreeNode;
+    requiresPruning?: boolean;
+    orphaned?: boolean;
 }
 
 export interface ApplicationResourceTreeProps {
@@ -34,6 +36,7 @@ export interface ApplicationResourceTreeProps {
     onNodeClick?: (fullName: string) => any;
     nodeMenu?: (node: models.ResourceNode) => React.ReactNode;
     onClearFilter: () => any;
+    showOrphanedResources: boolean;
 }
 
 interface Line { x1: number; y1: number; x2: number; y2: number; }
@@ -95,8 +98,8 @@ function filterGraph(app: models.Application, filteredIndicatorParent: string, g
     }
 }
 
-function compareNodes(first: models.ResourceNode, second: models.ResourceNode) {
-    return nodeKey(first).localeCompare(nodeKey(second));
+function compareNodes(first: ResourceTreeNode, second: ResourceTreeNode) {
+    return `${first.orphaned && '1' || '0'}/${nodeKey(first)}`.localeCompare(`${second.orphaned && '1' || '0'}/${nodeKey(second)}`);
 }
 
 function appNodeKey(app: models.Application) {
@@ -161,25 +164,31 @@ function renderResourceNode(props: ApplicationResourceTreeProps, id: string, nod
         healthState = node.health;
     }
     const kindIcon = ICON_CLASS_BY_KIND[node.kind.toLocaleLowerCase()] || 'fa fa-cogs';
+    const appNode = isAppNode(node);
+    const rootNode = !node.root;
     return (
         <div onClick={() => props.onNodeClick && props.onNodeClick(fullName)} className={classNames('application-resource-tree__node', {
-            active: fullName === props.selectedNodeFullName,
+            'active': fullName === props.selectedNodeFullName,
+            'application-resource-tree__node--orphaned': node.orphaned,
         })} style={{left: node.x, top: node.y, width: node.width, height: node.height}}>
-            {!isAppNode(node) && <NodeUpdateAnimation resourceVersion={node.resourceVersion} />}
+            {!appNode && <NodeUpdateAnimation resourceVersion={node.resourceVersion} />}
             <div className={classNames('application-resource-tree__node-kind-icon', {
-                'application-resource-tree__node-kind-icon--big': isAppNode(node),
+                'application-resource-tree__node-kind-icon--big': rootNode,
             })}>
                 <i title={node.kind} className={`icon ${kindIcon}`} />
             </div>
             <div className='application-resource-tree__node-content'>
                 <span className='application-resource-tree__node-title'>{node.name}</span>
                 <div className={classNames('application-resource-tree__node-status-icon', {
-                    'application-resource-tree__node-status-icon--offset': isAppNode(node),
+                    'application-resource-tree__node-status-icon--offset': rootNode,
                 })}>
                     {node.hook && (<i title='Resource lifecycle hook' className='fa fa-anchor' />)}
                     {healthState != null && <HealthStatusIcon state={healthState}/>}
-                    {comparisonStatus != null && <ComparisonStatusIcon status={comparisonStatus}/>}
-                    <ApplicationURLs urls={isAppNode(node) ? props.app.status.summary.externalURLs : node.networkingInfo && node.networkingInfo.externalURLs}/>
+                    {comparisonStatus != null && <ComparisonStatusIcon status={comparisonStatus} resource={!rootNode && node} />}
+                    {(appNode && !rootNode) && (
+                        <a href={'/applications/' + node.name} title='Open application'><i className='fa fa-external-link-alt'/></a>
+                    )}
+                    <ApplicationURLs urls={rootNode ? props.app.status.summary.externalURLs : node.networkingInfo && node.networkingInfo.externalURLs}/>
                 </div>
             </div>
             <div className='application-resource-tree__node-labels'>
@@ -201,8 +210,8 @@ function renderResourceNode(props: ApplicationResourceTreeProps, id: string, nod
 
 function findNetworkTargets(nodes: ResourceTreeNode[], networkingInfo: models.ResourceNetworkingInfo): ResourceTreeNode[] {
     let result = new Array<ResourceTreeNode>();
-    const refs = new Set((networkingInfo.targetRefs || []).map(treeNodeKey));
-    result = result.concat(nodes.filter((target) => refs.has(treeNodeKey(target))));
+    const refs = new Set((networkingInfo.targetRefs || []).map(nodeKey));
+    result = result.concat(nodes.filter((target) => refs.has(nodeKey(target))));
     if (networkingInfo.targetLabels) {
         result = result.concat(nodes.filter((target) => {
             if (target.networkingInfo && target.networkingInfo.labels) {
@@ -237,13 +246,16 @@ export const ApplicationResourceTree = (props: ApplicationResourceTreeProps) => 
     const statusByKey = new Map<string, models.ResourceStatus>();
     props.app.status.resources.forEach((res) => statusByKey.set(nodeKey(res), res));
     const nodeByKey = new Map<string, ResourceTreeNode>();
-    props.tree.nodes.forEach((node) => {
+    props.tree.nodes.map((node) => ({...node, orphaned: false}))
+            .concat((props.showOrphanedResources && props.tree.orphanedNodes || [])
+            .map((node) => ({...node, orphaned: true}))).forEach((node) => {
         const status = statusByKey.get(nodeKey(node));
         const resourceNode: ResourceTreeNode = {...node};
         if (status) {
             resourceNode.health = status.health;
             resourceNode.status = status.status;
             resourceNode.hook = status.hook;
+            resourceNode.requiresPruning = status.requiresPruning;
         }
         nodeByKey.set(treeNodeKey(node), resourceNode);
     });

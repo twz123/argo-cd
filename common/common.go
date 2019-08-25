@@ -15,6 +15,10 @@ const (
 	ArgoCDConfigMapName     = "argocd-cm"
 	ArgoCDSecretName        = "argocd-secret"
 	ArgoCDRBACConfigMapName = "argocd-rbac-cm"
+	// Contains SSH known hosts data for connecting repositories. Will get mounted as volume to pods
+	ArgoCDKnownHostsConfigMapName = "argocd-ssh-known-hosts-cm"
+	// Contains TLS certificate data for connecting repositories. Will get mounted as volume to pods
+	ArgoCDTLSCertsConfigMapName = "argocd-tls-certs-cm"
 )
 
 // Default system namespace
@@ -29,6 +33,18 @@ const (
 	DefaultPortArgoCDMetrics          = 8082
 	DefaultPortArgoCDAPIServerMetrics = 8083
 	DefaultPortRepoServerMetrics      = 8084
+)
+
+// Default paths on the pod's file system
+const (
+	// The default base path where application config is located
+	DefaultPathAppConfig = "/app/config"
+	// The default path where TLS certificates for repositories are located
+	DefaultPathTLSConfig = "/app/config/tls"
+	// The default path where SSH known hosts are stored
+	DefaultPathSSHConfig = "/app/config/ssh"
+	// Default name for the SSH known hosts file
+	DefaultSSHKnownHostsName = "ssh_known_hosts"
 )
 
 // Argo CD application related constants
@@ -59,6 +75,8 @@ const (
 	LoginEndpoint = "/auth/login"
 	// CallbackEndpoint is Argo CD's final callback endpoint we reach after OAuth 2.0 login flow has been completed
 	CallbackEndpoint = "/auth/callback"
+	// DexCallbackEndpoint is Argo CD's final callback endpoint when Dex is configured
+	DexCallbackEndpoint = "/api/dex/callback"
 	// ArgoCDClientAppName is name of the Oauth client app used when registering our web app to dex
 	ArgoCDClientAppName = "Argo CD"
 	// ArgoCDClientAppID is the Oauth client ID we will use when registering our app to dex
@@ -98,10 +116,6 @@ const (
 	AnnotationKeyManagedBy = "managed-by"
 	// AnnotationValueManagedByArgoCD is a 'managed-by' annotation value for resources managed by Argo CD
 	AnnotationValueManagedByArgoCD = "argocd.argoproj.io"
-	// AnnotationKeyHelmHook is the helm hook annotation
-	AnnotationKeyHelmHook = "helm.sh/hook"
-	// AnnotationValueHelmHookCRDInstall is a value of crd helm hook
-	AnnotationValueHelmHookCRDInstall = "crd-install"
 	// ResourcesFinalizerName the finalizer value which we inject to finalize deletion of an application
 	ResourcesFinalizerName = "resources-finalizer.argocd.argoproj.io"
 )
@@ -115,6 +129,10 @@ const (
 	// EnvVarFakeInClusterConfig is an environment variable to fake an in-cluster RESTConfig using
 	// the current kubectl context (for development purposes)
 	EnvVarFakeInClusterConfig = "ARGOCD_FAKE_IN_CLUSTER"
+	// Overrides the location where SSH known hosts for repo access data is stored
+	EnvVarSSHDataPath = "ARGOCD_SSH_DATA_PATH"
+	// Overrides the location where TLS certificate for repo access data is stored
+	EnvVarTLSDataPath = "ARGOCD_TLS_DATA_PATH"
 )
 
 const (

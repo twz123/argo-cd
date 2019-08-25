@@ -3,17 +3,14 @@ package kube
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
-
 	"github.com/ghodss/yaml"
 	log "github.com/sirupsen/logrus"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,10 +24,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	"k8s.io/kubernetes/pkg/kubectl/scheme"
 
 	"github.com/argoproj/argo-cd/common"
-	jsonutil "github.com/argoproj/argo-cd/util/json"
 )
 
 const (
@@ -41,6 +36,7 @@ const (
 const (
 	SecretKind                   = "Secret"
 	ServiceKind                  = "Service"
+	ServiceAccountKind           = "ServiceAccount"
 	EndpointsKind                = "Endpoints"
 	DeploymentKind               = "Deployment"
 	ReplicaSetKind               = "ReplicaSet"
@@ -51,6 +47,7 @@ const (
 	PersistentVolumeClaimKind    = "PersistentVolumeClaim"
 	CustomResourceDefinitionKind = "CustomResourceDefinition"
 	PodKind                      = "Pod"
+	APIServiceKind               = "APIService"
 )
 
 type ResourceKey struct {
@@ -369,42 +366,9 @@ func SplitYAML(out string) ([]*unstructured.Unstructured, error) {
 			}
 			continue
 		}
-		remObj, err := Remarshal(&obj)
-		if err != nil {
-			log.Debugf("Failed to remarshal oject: %v", err)
-		} else {
-			obj = *remObj
-		}
 		objs = append(objs, &obj)
 	}
 	return objs, firstErr
-}
-
-// Remarshal checks resource kind and version and re-marshal using corresponding struct custom marshaller.
-// This ensures that expected resource state is formatter same as actual resource state in kubernetes
-// and allows to find differences between actual and target states more accurately.
-func Remarshal(obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	data, err := json.Marshal(obj)
-	if err != nil {
-		return nil, err
-	}
-	item, err := scheme.Scheme.New(obj.GroupVersionKind())
-	if err != nil {
-		return nil, err
-	}
-	// This will drop any omitempty fields, perform resource conversion etc...
-	unmarshalledObj := reflect.New(reflect.TypeOf(item).Elem()).Interface()
-	err = json.Unmarshal(data, &unmarshalledObj)
-	if err != nil {
-		return nil, err
-	}
-	unstrBody, err := runtime.DefaultUnstructuredConverter.ToUnstructured(unmarshalledObj)
-	if err != nil {
-		return nil, err
-	}
-	// remove all default values specified by custom formatter (e.g. creationTimestamp)
-	unstrBody = jsonutil.RemoveMapFields(obj.Object, unstrBody)
-	return &unstructured.Unstructured{Object: unstrBody}, nil
 }
 
 // WatchWithRetry returns channel of watch events or errors of failed to call watch API.
@@ -456,4 +420,12 @@ func WatchWithRetry(ctx context.Context, getWatch func() (watch.Interface, error
 		}
 	}()
 	return ch
+}
+
+func GetDeploymentReplicas(u *unstructured.Unstructured) *int64 {
+	val, found, err := unstructured.NestedInt64(u.Object, "spec", "replicas")
+	if !found || err != nil {
+		return nil
+	}
+	return &val
 }

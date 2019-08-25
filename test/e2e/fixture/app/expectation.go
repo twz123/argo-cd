@@ -49,15 +49,26 @@ func SyncStatusIs(expected SyncStatusCode) Expectation {
 	}
 }
 
-func Condition(conditionType ApplicationConditionType) Expectation {
+func Condition(conditionType ApplicationConditionType, conditionMessage string) Expectation {
 	return func(c *Consequences) (state, string) {
-		message := fmt.Sprintf("condition of type %s", conditionType)
-		for _, condition := range c.app().Status.Conditions {
-			if conditionType == condition.Type {
+		got := c.app().Status.Conditions
+		message := fmt.Sprintf("condition {%s %s} in %v", conditionType, conditionMessage, got)
+		for _, condition := range got {
+			if conditionType == condition.Type && strings.Contains(condition.Message, conditionMessage) {
 				return succeeded, message
 			}
 		}
-		return failed, message
+		return pending, message
+	}
+}
+
+func NoConditions() Expectation {
+	return func(c *Consequences) (state, string) {
+		message := "no conditions"
+		if len(c.app().Status.Conditions) == 0 {
+			return succeeded, message
+		}
+		return pending, message
 	}
 }
 
@@ -79,6 +90,30 @@ func ResourceHealthIs(kind, resource string, expected HealthStatusCode) Expectat
 	return func(c *Consequences) (state, string) {
 		actual := c.resource(kind, resource).Health.Status
 		return simple(actual == expected, fmt.Sprintf("resource '%s/%s' health should be %s, is %s", kind, resource, expected, actual))
+	}
+}
+func ResourceResultNumbering(num int) Expectation {
+	return func(c *Consequences) (state, string) {
+		actualNum := len(c.app().Status.OperationState.SyncResult.Resources)
+		if actualNum < num {
+			return pending, fmt.Sprintf("not enough results yet, want %d, got %d", num, actualNum)
+		} else if actualNum == num {
+			return succeeded, fmt.Sprintf("right number of results, want %d, got %d", num, actualNum)
+		} else {
+			return failed, fmt.Sprintf("too many results, want %d, got %d", num, actualNum)
+		}
+	}
+}
+
+func ResourceResultIs(result ResourceResult) Expectation {
+	return func(c *Consequences) (state, string) {
+		results := c.app().Status.OperationState.SyncResult.Resources
+		for _, res := range results {
+			if *res == result {
+				return succeeded, fmt.Sprintf("found resource result %v", result)
+			}
+		}
+		return pending, fmt.Sprintf("waiting for resource result %v in %v", result, results)
 	}
 }
 
@@ -164,9 +199,9 @@ func Success(message string) Expectation {
 }
 
 // asserts that the last command was an error with substring match
-func Error(message string) Expectation {
+func Error(message, err string) Expectation {
 	return func(c *Consequences) (state, string) {
-		if c.actions.lastError != nil && strings.Contains(c.actions.lastOutput, message) {
+		if c.actions.lastError != nil && strings.Contains(c.actions.lastOutput, message) && strings.Contains(c.actions.lastError.Error(), err) {
 			return succeeded, fmt.Sprintf("found error with message '%s'", c.actions.lastOutput)
 		}
 		return failed, fmt.Sprintf("expected error with message '%s', got error '%v' message '%s'", message, c.actions.lastError, c.actions.lastOutput)

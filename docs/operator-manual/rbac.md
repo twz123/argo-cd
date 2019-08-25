@@ -28,6 +28,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: argocd-rbac-cm
+  namespace: argocd
 data:
   policy.default: role:readonly
   policy.csv: |
@@ -40,3 +41,8 @@ data:
 
     g, your-github-org:your-team, role:org-admin
 ```
+
+## Anonymous Access
+
+THe anonymous access to Argo CD can be enabled using `users.anonymous.enabled` field in `argocd-cm` (see [./argocd-cm.yaml](argocd-cm.yaml)).
+The anonymous users get default role permissions specified by `policy.default` in `argocd-rbac-cm.yaml. For read-only access you'll want `policy.default: role:readonly` as above

@@ -7,11 +7,16 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	log "github.com/sirupsen/logrus"
+	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	"k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -24,25 +29,33 @@ import (
 	"github.com/argoproj/argo-cd/util/health"
 	"github.com/argoproj/argo-cd/util/hook"
 	"github.com/argoproj/argo-cd/util/kube"
+	"github.com/argoproj/argo-cd/util/rand"
 	"github.com/argoproj/argo-cd/util/resource"
 )
 
+const (
+	crdReadinessTimeout = time.Duration(3) * time.Second
+)
+
+var syncIdPrefix uint64 = 0
+
 type syncContext struct {
-	resourceOverrides map[string]v1alpha1.ResourceOverride
-	appName           string
-	proj              *v1alpha1.AppProject
-	compareResult     *comparisonResult
-	config            *rest.Config
-	dynamicIf         dynamic.Interface
-	disco             discovery.DiscoveryInterface
-	kubectl           kube.Kubectl
-	namespace         string
-	server            string
-	syncOp            *v1alpha1.SyncOperation
-	syncRes           *v1alpha1.SyncOperationResult
-	syncResources     []v1alpha1.SyncOperationResource
-	opState           *v1alpha1.OperationState
-	log               *log.Entry
+	resourceOverrides   map[string]v1alpha1.ResourceOverride
+	appName             string
+	proj                *v1alpha1.AppProject
+	compareResult       *comparisonResult
+	config              *rest.Config
+	dynamicIf           dynamic.Interface
+	disco               discovery.DiscoveryInterface
+	extensionsclientset *clientset.Clientset
+	kubectl             kube.Kubectl
+	namespace           string
+	server              string
+	syncOp              *v1alpha1.SyncOperation
+	syncRes             *v1alpha1.SyncOperationResult
+	syncResources       []v1alpha1.SyncOperationResource
+	opState             *v1alpha1.OperationState
+	log                 *log.Entry
 	// lock to protect concurrent updates of the result list
 	lock sync.Mutex
 }
@@ -92,12 +105,7 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 		revision = syncOp.Revision
 	}
 
-	compareResult, err := m.CompareAppState(app, revision, source, false)
-	if err != nil {
-		state.Phase = v1alpha1.OperationError
-		state.Message = err.Error()
-		return
-	}
+	compareResult := m.CompareAppState(app, revision, source, false, syncOp.Manifests)
 
 	// If there are any error conditions, do not perform the operation
 	errConditions := make([]v1alpha1.ApplicationCondition, 0)
@@ -137,6 +145,13 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 		return
 	}
 
+	extensionsclientset, err := clientset.NewForConfig(restConfig)
+	if err != nil {
+		state.Phase = v1alpha1.OperationError
+		state.Message = fmt.Sprintf("Failed to initialize extensions client: %v", err)
+		return
+	}
+
 	proj, err := argo.GetAppProject(&app.Spec, listersv1alpha1.NewAppProjectLister(m.projInformer.GetIndexer()), m.namespace)
 	if err != nil {
 		state.Phase = v1alpha1.OperationError
@@ -144,23 +159,35 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 		return
 	}
 
-	syncCtx := syncContext{
-		resourceOverrides: m.settings.ResourceOverrides,
-		appName:           app.Name,
-		proj:              proj,
-		compareResult:     compareResult,
-		config:            restConfig,
-		dynamicIf:         dynamicIf,
-		disco:             disco,
-		kubectl:           m.kubectl,
-		namespace:         app.Spec.Destination.Namespace,
-		server:            app.Spec.Destination.Server,
-		syncOp:            &syncOp,
-		syncRes:           syncRes,
-		syncResources:     syncResources,
-		opState:           state,
-		log:               log.WithFields(log.Fields{"application": app.Name}),
+	resourceOverrides, err := m.settingsMgr.GetResourceOverrides()
+	if err != nil {
+		state.Phase = v1alpha1.OperationError
+		state.Message = fmt.Sprintf("Failed to load resource overrides: %v", err)
+		return
 	}
+
+	atomic.AddUint64(&syncIdPrefix, 1)
+	syncId := fmt.Sprintf("%05d-%s", syncIdPrefix, rand.RandString(5))
+	syncCtx := syncContext{
+		resourceOverrides:   resourceOverrides,
+		appName:             app.Name,
+		proj:                proj,
+		compareResult:       compareResult,
+		config:              restConfig,
+		dynamicIf:           dynamicIf,
+		disco:               disco,
+		extensionsclientset: extensionsclientset,
+		kubectl:             m.kubectl,
+		namespace:           app.Spec.Destination.Namespace,
+		server:              app.Spec.Destination.Server,
+		syncOp:              &syncOp,
+		syncRes:             syncRes,
+		syncResources:       syncResources,
+		opState:             state,
+		log:                 log.WithFields(log.Fields{"application": app.Name, "syncId": syncId}),
+	}
+
+	start := time.Now()
 
 	if state.Phase == v1alpha1.OperationTerminating {
 		syncCtx.terminate()
@@ -168,7 +195,7 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 		syncCtx.sync()
 	}
 
-	syncCtx.log.Info("sync/terminate complete")
+	syncCtx.log.WithField("duration", time.Since(start)).Info("sync/terminate complete")
 
 	if !syncOp.DryRun && !syncCtx.isSelectiveSync() && syncCtx.opState.Phase.Successful() {
 		err := m.persistRevisionHistory(app, compareResult.syncStatus.Revision, source)
@@ -181,8 +208,8 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 // sync has performs the actual apply or hook based sync
 func (sc *syncContext) sync() {
 	sc.log.WithFields(log.Fields{"isSelectiveSync": sc.isSelectiveSync(), "skipHooks": sc.skipHooks(), "started": sc.started()}).Info("syncing")
-	tasks, successful := sc.getSyncTasks()
-	if !successful {
+	tasks, ok := sc.getSyncTasks()
+	if !ok {
 		sc.setOperationPhase(v1alpha1.OperationFailed, "one or more synchronization tasks are not valid")
 		return
 	}
@@ -197,7 +224,7 @@ func (sc *syncContext) sync() {
 	// the dry-run for this operation, is if the resource or hook list is empty.
 	if !sc.started() {
 		sc.log.Debug("dry-run")
-		if !sc.runTasks(tasks, true) {
+		if sc.runTasks(tasks, true) == failed {
 			sc.setOperationPhase(v1alpha1.OperationFailed, "one or more objects failed to apply (dry run)")
 			return
 		}
@@ -214,7 +241,7 @@ func (sc *syncContext) sync() {
 			sc.setResourceResult(task, "", operationState, message)
 
 			// maybe delete the hook
-			if enforceHookDeletePolicy(task.liveObj, task.operationState) {
+			if task.needsDeleting() {
 				err := sc.deleteResource(task)
 				if err != nil {
 					sc.setResourceResult(task, "", v1alpha1.OperationError, fmt.Sprintf("failed to delete resource: %v", err))
@@ -241,14 +268,17 @@ func (sc *syncContext) sync() {
 	}
 
 	// any running tasks, lets wait...
-	if tasks.Find(func(t *syncTask) bool { return t.running() }) != nil {
+	if tasks.Any(func(t *syncTask) bool { return t.running() }) {
 		sc.setOperationPhase(v1alpha1.OperationRunning, "one or more tasks are running")
 		return
 	}
 
+	// syncFailTasks only run during failure, so separate them from regular tasks
+	syncFailTasks, tasks := tasks.Split(func(t *syncTask) bool { return t.phase == v1alpha1.SyncPhaseSyncFail })
+
 	// if there are any completed but unsuccessful tasks, sync is a failure.
-	if tasks.Find(func(t *syncTask) bool { return t.completed() && !t.successful() }) != nil {
-		sc.setOperationPhase(v1alpha1.OperationFailed, "one or more synchronization tasks completed unsuccessfully")
+	if tasks.Any(func(t *syncTask) bool { return t.completed() && !t.successful() }) {
+		sc.setOperationFailed(syncFailTasks, "one or more synchronization tasks completed unsuccessfully")
 		return
 	}
 
@@ -259,7 +289,7 @@ func (sc *syncContext) sync() {
 	// If no sync tasks were generated (e.g., in case all application manifests have been removed),
 	// the sync operation is successful.
 	if len(tasks) == 0 {
-		sc.setOperationPhase(v1alpha1.OperationSucceeded, "successfully synced")
+		sc.setOperationPhase(v1alpha1.OperationSucceeded, "successfully synced (no more tasks)")
 		return
 	}
 
@@ -267,14 +297,43 @@ func (sc *syncContext) sync() {
 	phase := tasks.phase()
 	wave := tasks.wave()
 
-	sc.log.WithFields(log.Fields{"phase": phase, "wave": wave, "tasks": tasks}).Debug("filtering tasks in correct phase and wave")
+	// if it is the last phase/wave and the only remaining tasks are non-hooks, the we are successful
+	// EVEN if those objects subsequently degraded
+	// This handles the common case where neither hooks or waves are used and a sync equates to simply an (asynchronous) kubectl apply of manifests, which succeeds immediately.
+	complete := !tasks.Any(func(t *syncTask) bool { return t.phase != phase || wave != t.wave() || t.isHook() })
+
+	sc.log.WithFields(log.Fields{"phase": phase, "wave": wave, "tasks": tasks, "syncFailTasks": syncFailTasks}).Debug("filtering tasks in correct phase and wave")
 	tasks = tasks.Filter(func(t *syncTask) bool { return t.phase == phase && t.wave() == wave })
 
 	sc.setOperationPhase(v1alpha1.OperationRunning, "one or more tasks are running")
 
 	sc.log.WithFields(log.Fields{"tasks": tasks}).Debug("wet-run")
-	if !sc.runTasks(tasks, false) {
-		sc.setOperationPhase(v1alpha1.OperationFailed, "one or more objects failed to apply")
+	runState := sc.runTasks(tasks, false)
+	switch runState {
+	case failed:
+		sc.setOperationFailed(syncFailTasks, "one or more objects failed to apply")
+	case successful:
+		if complete {
+			sc.setOperationPhase(v1alpha1.OperationSucceeded, "successfully synced (all tasks run)")
+		}
+	}
+}
+
+func (sc *syncContext) setOperationFailed(syncFailTasks syncTasks, message string) {
+	if len(syncFailTasks) > 0 {
+		// if all the failure hooks are completed, don't run them again, and mark the sync as failed
+		if syncFailTasks.All(func(task *syncTask) bool { return task.completed() }) {
+			sc.setOperationPhase(v1alpha1.OperationFailed, message)
+			return
+		}
+		// otherwise, we need to start the failure hooks, and then return without setting
+		// the phase, so we make sure we have at least one more sync
+		sc.log.WithFields(log.Fields{"syncFailTasks": syncFailTasks}).Debug("running sync fail tasks")
+		if sc.runTasks(syncFailTasks, false) == failed {
+			sc.setOperationPhase(v1alpha1.OperationFailed, message)
+		}
+	} else {
+		sc.setOperationPhase(v1alpha1.OperationFailed, message)
 	}
 }
 
@@ -326,7 +385,7 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 
 	for _, resource := range sc.compareResult.managedResources {
 		if !sc.containsResource(resource) {
-			log.WithFields(log.Fields{"group": resource.Group, "kind": resource.Kind, "name": resource.Name}).
+			sc.log.WithFields(log.Fields{"group": resource.Group, "kind": resource.Kind, "name": resource.Name}).
 				Debug("skipping")
 			continue
 		}
@@ -335,7 +394,7 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 
 		// this creates garbage tasks
 		if hook.IsHook(obj) {
-			log.WithFields(log.Fields{"group": obj.GroupVersionKind().Group, "kind": obj.GetKind(), "namespace": obj.GetNamespace(), "name": obj.GetName()}).
+			sc.log.WithFields(log.Fields{"group": obj.GroupVersionKind().Group, "kind": obj.GetKind(), "namespace": obj.GetNamespace(), "name": obj.GetName()}).
 				Debug("skipping hook")
 			continue
 		}
@@ -448,7 +507,8 @@ func (sc *syncContext) liveObj(obj *unstructured.Unstructured) *unstructured.Uns
 	for _, resource := range sc.compareResult.managedResources {
 		if resource.Group == obj.GroupVersionKind().Group &&
 			resource.Kind == obj.GetKind() &&
-			resource.Namespace == obj.GetNamespace() &&
+			// cluster scoped objects will not have a namespace, even if the user has defined it
+			(resource.Namespace == "" || resource.Namespace == obj.GetNamespace()) &&
 			resource.Name == obj.GetName() {
 			return resource.Live
 		}
@@ -464,11 +524,31 @@ func (sc *syncContext) setOperationPhase(phase v1alpha1.OperationPhase, message 
 	sc.opState.Message = message
 }
 
+// ensureCRDReady waits until specified CRD is ready (established condition is true). Method is best effort - it does not fail even if CRD is not ready without timeout.
+func (sc *syncContext) ensureCRDReady(name string) {
+	_ = wait.PollImmediate(time.Duration(100)*time.Millisecond, crdReadinessTimeout, func() (bool, error) {
+		crd, err := sc.extensionsclientset.ApiextensionsV1beta1().CustomResourceDefinitions().Get(name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		for _, condition := range crd.Status.Conditions {
+			if condition.Type == v1beta1.Established {
+				return condition.Status == v1beta1.ConditionTrue, nil
+			}
+		}
+		return false, nil
+	})
+}
+
 // applyObject performs a `kubectl apply` of a single resource
 func (sc *syncContext) applyObject(targetObj *unstructured.Unstructured, dryRun bool, force bool) (v1alpha1.ResultCode, string) {
-	message, err := sc.kubectl.ApplyResource(sc.config, targetObj, targetObj.GetNamespace(), dryRun, force)
+	validate := !resource.HasAnnotationOption(targetObj, common.AnnotationSyncOptions, "Validate=false")
+	message, err := sc.kubectl.ApplyResource(sc.config, targetObj, targetObj.GetNamespace(), dryRun, force, validate)
 	if err != nil {
 		return v1alpha1.ResultCodeSyncFailed, err.Error()
+	}
+	if kube.IsCRD(targetObj) && !dryRun {
+		sc.ensureCRDReady(targetObj.GetName())
 	}
 	return v1alpha1.ResultCodeSynced, message
 }
@@ -542,15 +622,23 @@ func (sc *syncContext) terminate() {
 }
 
 func (sc *syncContext) deleteResource(task *syncTask) error {
-	sc.log.WithFields(log.Fields{"task": task}).Debug("deleting task")
-	apiResource, err := kube.ServerResourceForGroupVersionKind(sc.disco, task.groupVersionKind())
+	sc.log.WithFields(log.Fields{"task": task}).Debug("deleting resource")
+	resIf, err := sc.getResourceIf(task)
 	if err != nil {
 		return err
 	}
-	resource := kube.ToGroupVersionResource(task.groupVersionKind().GroupVersion().String(), apiResource)
-	resIf := kube.ToResourceInterface(sc.dynamicIf, apiResource, resource, task.namespace())
 	propagationPolicy := metav1.DeletePropagationForeground
 	return resIf.Delete(task.name(), &metav1.DeleteOptions{PropagationPolicy: &propagationPolicy})
+}
+
+func (sc *syncContext) getResourceIf(task *syncTask) (dynamic.ResourceInterface, error) {
+	apiResource, err := kube.ServerResourceForGroupVersionKind(sc.disco, task.groupVersionKind())
+	if err != nil {
+		return nil, err
+	}
+	res := kube.ToGroupVersionResource(task.groupVersionKind().GroupVersion().String(), apiResource)
+	resIf := kube.ToResourceInterface(sc.dynamicIf, apiResource, res, task.namespace())
+	return resIf, err
 }
 
 var operationPhases = map[v1alpha1.ResultCode]v1alpha1.OperationPhase{
@@ -560,13 +648,22 @@ var operationPhases = map[v1alpha1.ResultCode]v1alpha1.OperationPhase{
 	v1alpha1.ResultCodePruneSkipped: v1alpha1.OperationSucceeded,
 }
 
-func (sc *syncContext) runTasks(tasks syncTasks, dryRun bool) bool {
+// tri-state
+type runState = int
+
+const (
+	successful = iota
+	pending
+	failed
+)
+
+func (sc *syncContext) runTasks(tasks syncTasks, dryRun bool) runState {
 
 	dryRun = dryRun || sc.syncOp.DryRun
 
 	sc.log.WithFields(log.Fields{"numTasks": len(tasks), "dryRun": dryRun}).Debug("running tasks")
 
-	successful := true
+	runState := successful
 	var createTasks syncTasks
 	var pruneTasks syncTasks
 
@@ -577,60 +674,92 @@ func (sc *syncContext) runTasks(tasks syncTasks, dryRun bool) bool {
 			createTasks = append(createTasks, task)
 		}
 	}
-
-	var wg sync.WaitGroup
-	for _, task := range pruneTasks {
-		wg.Add(1)
-		go func(t *syncTask) {
-			defer wg.Done()
-			sc.log.WithFields(log.Fields{"dryRun": dryRun, "task": t}).Debug("pruning")
-			result, message := sc.pruneObject(t.liveObj, sc.syncOp.Prune, dryRun)
-			if result == v1alpha1.ResultCodeSyncFailed {
-				successful = false
-			}
-			if !dryRun || result == v1alpha1.ResultCodeSyncFailed {
-				sc.setResourceResult(t, result, operationPhases[result], message)
-			}
-		}(task)
-	}
-	wg.Wait()
-
-	processCreateTasks := func(tasks syncTasks) {
-		var createWg sync.WaitGroup
-		for _, task := range tasks {
-			if dryRun && task.skipDryRun {
-				continue
-			}
-			createWg.Add(1)
+	// prune first
+	{
+		var wg sync.WaitGroup
+		for _, task := range pruneTasks {
+			wg.Add(1)
 			go func(t *syncTask) {
-				defer createWg.Done()
-				sc.log.WithFields(log.Fields{"dryRun": dryRun, "task": t}).Debug("applying")
-				result, message := sc.applyObject(t.targetObj, dryRun, sc.syncOp.SyncStrategy.Force())
+				defer wg.Done()
+				sc.log.WithFields(log.Fields{"dryRun": dryRun, "task": t}).Debug("pruning")
+				result, message := sc.pruneObject(t.liveObj, sc.syncOp.Prune, dryRun)
 				if result == v1alpha1.ResultCodeSyncFailed {
-					successful = false
+					runState = failed
 				}
 				if !dryRun || result == v1alpha1.ResultCodeSyncFailed {
 					sc.setResourceResult(t, result, operationPhases[result], message)
 				}
 			}(task)
 		}
-		createWg.Wait()
+		wg.Wait()
 	}
 
-	var tasksGroup syncTasks
-	for _, task := range createTasks {
-		//Only wait if the type of the next task is different than the previous type
-		if len(tasksGroup) > 0 && tasksGroup[0].targetObj.GetKind() != task.kind() {
+	// delete anything that need deleting
+	if runState == successful && createTasks.Any(func(t *syncTask) bool { return t.needsDeleting() }) {
+		var wg sync.WaitGroup
+		for _, task := range createTasks.Filter(func(t *syncTask) bool { return t.needsDeleting() }) {
+			wg.Add(1)
+			go func(t *syncTask) {
+				defer wg.Done()
+				sc.log.WithFields(log.Fields{"dryRun": dryRun, "task": t}).Debug("deleting")
+				if !dryRun {
+					err := sc.deleteResource(t)
+					if err != nil {
+						// it is possible to get a race condition here, such that the resource does not exist when
+						// delete is requested, we treat this as a nop
+						if !apierr.IsNotFound(err) {
+							runState = failed
+							sc.setResourceResult(t, "", v1alpha1.OperationError, fmt.Sprintf("failed to delete resource: %v", err))
+						}
+					} else {
+						// if there is anything that needs deleting, we are at best now in pending and
+						// want to return and wait for sync to be invoked again
+						runState = pending
+					}
+				}
+			}(task)
+		}
+		wg.Wait()
+	}
+	// finally create resources
+	if runState == successful {
+		processCreateTasks := func(tasks syncTasks) {
+			var createWg sync.WaitGroup
+			for _, task := range tasks {
+				if dryRun && task.skipDryRun {
+					continue
+				}
+				createWg.Add(1)
+				go func(t *syncTask) {
+					defer createWg.Done()
+					sc.log.WithFields(log.Fields{"dryRun": dryRun, "task": t}).Debug("applying")
+					result, message := sc.applyObject(t.targetObj, dryRun, sc.syncOp.SyncStrategy.Force())
+					if result == v1alpha1.ResultCodeSyncFailed {
+						runState = failed
+					}
+					if !dryRun || result == v1alpha1.ResultCodeSyncFailed {
+						sc.setResourceResult(t, result, operationPhases[result], message)
+					}
+				}(task)
+			}
+			createWg.Wait()
+		}
+
+		var tasksGroup syncTasks
+		for _, task := range createTasks {
+			//Only wait if the type of the next task is different than the previous type
+			if len(tasksGroup) > 0 && tasksGroup[0].targetObj.GetKind() != task.kind() {
+				processCreateTasks(tasksGroup)
+				tasksGroup = syncTasks{task}
+			} else {
+				tasksGroup = append(tasksGroup, task)
+			}
+		}
+		if len(tasksGroup) > 0 {
 			processCreateTasks(tasksGroup)
-			tasksGroup = syncTasks{task}
-		} else {
-			tasksGroup = append(tasksGroup, task)
 		}
 	}
-	if len(tasksGroup) > 0 {
-		processCreateTasks(tasksGroup)
-	}
-	return successful
+	return runState
 }
 
 // setResourceResult sets a resource details in the SyncResult.Resources list

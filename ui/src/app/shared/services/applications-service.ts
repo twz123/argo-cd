@@ -1,3 +1,4 @@
+import * as deepMerge from 'deepmerge';
 import { Observable } from 'rxjs';
 
 import * as models from '../models';
@@ -30,6 +31,11 @@ export class ApplicationsService {
         return requests.get(`/applications/${name}`).query(query).then((res) => this.parseAppFields(res.body));
     }
 
+    public revisionMetadata(name: string, revision: string): Promise<models.RevisionMetadata> {
+        return requests.get(`/applications/${name}/revisions/${revision}/metadata`)
+            .then((res) => res.body as models.RevisionMetadata);
+    }
+
     public resourceTree(name: string): Promise<models.ApplicationTree> {
         return requests.get(`/applications/${name}/resource-tree`).then((res) => res.body as models.ApplicationTree);
     }
@@ -49,7 +55,6 @@ export class ApplicationsService {
     }
 
     public updateSpec(appName: string, spec: models.ApplicationSpec): Promise<models.ApplicationSpec> {
-        spec.source.componentParameterOverrides = null;
         return requests.put(`/applications/${appName}/spec`).send(spec).then((res) => res.body as models.ApplicationSpec);
     }
 
@@ -78,8 +83,8 @@ export class ApplicationsService {
         });
     }
 
-    public sync(name: string, revision: string, prune: boolean, dryRun: boolean, resources: models.SyncOperationResource[]): Promise<boolean> {
-        return requests.post(`/applications/${name}/sync`).send({revision, prune: !!prune, dryRun: !!dryRun, resources}).then(() => true);
+    public sync(name: string, revision: string, prune: boolean, dryRun: boolean, strategy: models.SyncStrategy, resources: models.SyncOperationResource[]): Promise<boolean> {
+        return requests.post(`/applications/${name}/sync`).send({revision, prune: !!prune, dryRun: !!dryRun, strategy, resources}).then(() => true);
     }
 
     public rollback(name: string, id: number): Promise<boolean> {
@@ -87,7 +92,7 @@ export class ApplicationsService {
     }
 
     public getContainerLogs(applicationName: string, namespace: string, podName: string, containerName: string): Observable<models.LogEntry> {
-        return requests.loadEventSource(`/applications/${applicationName}/pods/${podName}/logs?container=${containerName}&follow=true&namespace=${namespace}`).repeat().retry().map(
+        return requests.loadEventSource(`/applications/${applicationName}/pods/${podName}/logs?container=${containerName}&follow=true&namespace=${namespace}`).map(
             (data) => JSON.parse(data).result as models.LogEntry);
     }
 
@@ -167,16 +172,18 @@ export class ApplicationsService {
     }
 
     private parseAppFields(data: any): models.Application {
-        const app = data as models.Application;
-        app.kind = app.kind || 'Application';
-        if (app.spec) {
-            app.spec.project = app.spec.project || 'default';
-            delete app.spec.source.componentParameterOverrides;
-        }
-        if (app.status) {
-            app.status.resources = app.status.resources || [];
-            app.status.summary = app.status.summary || {};
-        }
-        return app;
+        data = deepMerge({
+            apiVersion: 'argoproj.io/v1alpha1',
+            kind: 'Application',
+            spec: {
+                project: 'default',
+            },
+            status: {
+                resources: [],
+                summary: {},
+            },
+        }, data);
+
+        return data as models.Application;
     }
 }

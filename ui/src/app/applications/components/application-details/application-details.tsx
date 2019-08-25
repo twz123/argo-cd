@@ -1,32 +1,42 @@
-import { DropDownMenu, MenuItem, NotificationType, SlidingPanel, Tab, Tabs, TopBarFilter } from 'argo-ui';
+import {Checkbox as ArgoCheckbox, DropDownMenu, MenuItem, NotificationType, SlidingPanel, Tab, Tabs, TopBarFilter} from 'argo-ui';
 import * as classNames from 'classnames';
 import * as PropTypes from 'prop-types';
 import * as React from 'react';
-import { Checkbox } from 'react-form';
-import { RouteComponentProps } from 'react-router';
-import { BehaviorSubject, Observable } from 'rxjs';
+import {Checkbox} from 'react-form';
+import {RouteComponentProps} from 'react-router';
+import {BehaviorSubject, Observable} from 'rxjs';
+import {
+    DataLoader,
+    EmptyState,
+    ErrorNotification,
+    EventsList,
+    ObservableQuery,
+    Page,
+    Paginate,
+    YamlEditor,
+} from '../../../shared/components';
+import {AppContext} from '../../../shared/context';
+import * as appModels from '../../../shared/models';
+import {AppDetailsPreferences, AppsDetailsViewType, services} from '../../../shared/services';
+
+import {SyncStatuses} from '../../../shared/models';
+import {ApplicationConditions} from '../application-conditions/application-conditions';
+import {ApplicationDeploymentHistory} from '../application-deployment-history/application-deployment-history';
+import {ApplicationNodeInfo} from '../application-node-info/application-node-info';
+import {ApplicationOperationState} from '../application-operation-state/application-operation-state';
+import {ApplicationParameters} from '../application-parameters/application-parameters';
+import {ApplicationResourceEvents} from '../application-resource-events/application-resource-events';
+import {ApplicationResourceTree, ResourceTreeNode} from '../application-resource-tree/application-resource-tree';
+import {ApplicationResourcesDiff} from '../application-resources-diff/application-resources-diff';
+import {ApplicationStatusPanel} from '../application-status-panel/application-status-panel';
+import {ApplicationSummary} from '../application-summary/application-summary';
+import {ApplicationSyncPanel} from '../application-sync-panel/application-sync-panel';
+import {PodsLogsViewer} from '../pod-logs-viewer/pod-logs-viewer';
+import * as AppUtils from '../utils';
+import {isSameNode, nodeKey} from '../utils';
+import {ApplicationResourceList} from './application-resource-list';
 
 const jsonMergePatch = require('json-merge-patch');
-
-import { DataLoader, EmptyState, ErrorNotification, EventsList, ObservableQuery, Page, Paginate, YamlEditor } from '../../../shared/components';
-import { AppContext } from '../../../shared/context';
-import * as appModels from '../../../shared/models';
-import { AppDetailsPreferences, AppsDetailsViewType, services } from '../../../shared/services';
-
-import { ApplicationConditions } from '../application-conditions/application-conditions';
-import { ApplicationDeploymentHistory } from '../application-deployment-history/application-deployment-history';
-import { ApplicationNodeInfo } from '../application-node-info/application-node-info';
-import { ApplicationOperationState } from '../application-operation-state/application-operation-state';
-import { ApplicationParameters } from '../application-parameters/application-parameters';
-import { ApplicationResourceEvents } from '../application-resource-events/application-resource-events';
-import { ApplicationResourceTree, ResourceTreeNode } from '../application-resource-tree/application-resource-tree';
-import { ApplicationStatusPanel } from '../application-status-panel/application-status-panel';
-import { ApplicationSummary } from '../application-summary/application-summary';
-import { ApplicationSyncPanel } from '../application-sync-panel/application-sync-panel';
-import { PodsLogsViewer } from '../pod-logs-viewer/pod-logs-viewer';
-import * as AppUtils from '../utils';
-import { isSameNode, nodeKey } from '../utils';
-import { ApplicationResourceList } from './application-resource-list';
 
 require('./application-details.scss');
 
@@ -88,6 +98,9 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                     if (params.get('view') != null) {
                         pref.view = params.get('view') as AppsDetailsViewType;
                     }
+                    if (params.get('orphaned') != null) {
+                        pref.orphanedResources = params.get('orphaned') === 'true';
+                    }
                     return {...items[0], pref};
                 })}>
 
@@ -108,8 +121,10 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                             { value: 'sync:OutOfSync', label: 'OutOfSync' },
                             { content: () => <span>Health</span> },
                             { value: 'health:Healthy', label: 'Healthy' },
-                            // Unhealthy includes 'Unknown', 'Progressing', 'Degraded' and 'Missing'
-                            { value: 'health:Unhealthy', label: 'Unhealthy' },
+                            { value: 'health:Progressing', label: 'Progressing' },
+                            { value: 'health:Degraded', label: 'Degraded' },
+                            { value: 'health:Missing', label: 'Missing' },
+                            { value: 'health:Unknown', label: 'Unknown' },
                             { content: (setSelection) => (
                                 <div>
                                     Kinds <a onClick={() => setSelection(noKindsFilter.concat(kinds.map((kind) => `kind:${kind}`)))}>all</a> / <a
@@ -168,10 +183,19 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                             <div className='application-details__status-panel'>
                                 <ApplicationStatusPanel application={application}
                                     showOperation={() => this.setOperationStatusVisible(true)}
-                                    showConditions={() => this.setConditionsStatusVisible(true)}/>
+                                    showConditions={() => this.setConditionsStatusVisible(true)}
+                                />
                             </div>
                             <div className='application-details__tree'>
                                 {refreshing && <p className='application-details__refreshing-label'>Refreshing</p>}
+                                {(tree.orphanedNodes || []).length > 0 && (
+                                    <div className='application-details__orphaned-filter'>
+                                        <ArgoCheckbox checked={!!pref.orphanedResources} id='orphanedFilter' onChange={(val) => {
+                                            this.appContext.apis.navigation.goto('.', { orphaned: val });
+                                            services.viewPreferences.updatePreferences({ appDetails: {...pref, orphanedResources: val} });
+                                        }}/> <label htmlFor='orphanedFilter'>SHOW ORPHANED</label>
+                                    </div>
+                                )}
                                 {(pref.view === 'tree' || pref.view === 'network') && (
                                     <ApplicationResourceTree
                                         nodeFilter={(node) => this.filterTreeNode(node, treeFilter)}
@@ -180,6 +204,7 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                                         nodeMenu={(node) => this.renderResourceMenu(node, application)}
                                         tree={tree}
                                         app={application}
+                                        showOrphanedResources={pref.orphanedResources}
                                         useNetworkingHierarchy={pref.view === 'network'}
                                         onClearFilter={() => {
                                             this.appContext.apis.navigation.goto('.', { resource: '' } );
@@ -187,7 +212,7 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                                         }}
                                         />
                                 ) || (
-                                    <div className='argo-container'>
+                                    <div>
                                         {filteredRes.length > 0 && (
                                             <Paginate page={this.state.page} data={filteredRes} onPageChange={(page) => this.setState({page})} preferencesKey='application-details'>
                                             {(data) => (
@@ -246,15 +271,21 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                                                 services.repos.appDetails(src.repoURL, src.path, src.targetRevision, src.details)
                                                 .catch(() => ({ type: 'Directory' as appModels.AppSourceType, path: application.spec.source.path }))}>
                                             {(details: appModels.RepoAppDetails) => <ApplicationParameters
-                                                    save={(app) => services.applications.updateSpec(app.metadata.name, app.spec)} application={application} details={details} />}
+                                                    save={(app) => this.updateApp(app)} application={application} details={details} />}
                                             </DataLoader>
                                         ),
                                     }, {
-                                        title: 'SPEC MANIFEST', key: 'manifest', content: (
+                                        title: 'MANIFEST', key: 'manifest', content: (
                                             <YamlEditor minHeight={800} input={application.spec} onSave={async (patch) => {
                                                 const spec = JSON.parse(JSON.stringify(application.spec));
                                                 return services.applications.updateSpec(application.metadata.name, jsonMergePatch.apply(spec, JSON.parse(patch)));
                                             }}/>
+                                        ),
+                                    }, {
+                                        icon: 'fa fa-file-medical', title: 'DIFF', key: 'diff', content: (
+                                            <DataLoader key='diff'
+                                                        load={async () => await services.applications.managedResources(application.metadata.name)}>{(managedResources) =>
+                                                <ApplicationResourcesDiff states={managedResources}/>}</DataLoader>
                                         ),
                                     }, {
                                         title: 'EVENTS', key: 'event', content: <ApplicationResourceEvents applicationName={application.metadata.name}/>,
@@ -268,7 +299,7 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                                 selectedResource={syncResourceKey}
                                 />
                             <SlidingPanel isShown={this.selectedRollbackDeploymentIndex > -1} onClose={() => this.setRollbackPanelVisible(-1)}>
-                                {<ApplicationDeploymentHistory
+                                {this.selectedRollbackDeploymentIndex > -1 && <ApplicationDeploymentHistory
                                     app={application}
                                     selectedRollbackDeploymentIndex={this.selectedRollbackDeploymentIndex}
                                     rollbackApp={(info) => this.rollbackApplication(info)}
@@ -290,13 +321,18 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
         );
     }
 
-    private getApplicationActionMenu(application: appModels.Application) {
-        const refreshing = application.metadata.annotations && application.metadata.annotations[appModels.AnnotationRefreshKey];
+    private getApplicationActionMenu(app: appModels.Application) {
+        const refreshing = app.metadata.annotations && app.metadata.annotations[appModels.AnnotationRefreshKey];
+        const fullName = nodeKey({group: 'argoproj.io', kind: app.kind, name: app.metadata.name, namespace: app.metadata.namespace });
         return [{
             iconClassName: 'fa fa-info-circle',
-            title: <span className='show-for-medium'>Details</span>,
-            action: () => this.selectNode(nodeKey({
-                group: 'argoproj.io', kind: application.kind, name: application.metadata.name, namespace: application.metadata.namespace })),
+            title: <span className='show-for-medium'>App Details</span>,
+            action: () => this.selectNode(fullName),
+        }, {
+            iconClassName: 'fa fa-file-medical',
+            title: <span className='show-for-medium'>App Diff</span>,
+            action: () => this.selectNode(fullName, 0, 'diff'),
+            disabled: app.status.sync.status === SyncStatuses.Synced,
         }, {
             iconClassName: 'fa fa-sync',
             title: <span className='show-for-medium'>Sync</span>,
@@ -304,11 +340,13 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
         }, {
             iconClassName: 'fa fa-info-circle',
             title: <span className='show-for-medium'>Sync Status</span>,
-            action: () => this.setOperationStatusVisible(true),
+            action:  () => this.setOperationStatusVisible(true),
+            disabled: !app.status.operationState,
         }, {
             iconClassName: 'fa fa-history',
             title: <span className='show-for-medium'>History and rollback</span>,
             action: () => this.setRollbackPanelVisible(0),
+            disabled: !app.status.operationState,
         }, {
             iconClassName: 'fa fa-times-circle',
             title: <span className='show-for-medium'>Delete</span>,
@@ -317,23 +355,21 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
             iconClassName: classNames('fa fa-redo', { 'status-icon--spin': !!refreshing }),
             title: (
                 <React.Fragment><span className='show-for-medium'>Refresh</span> <DropDownMenu items={[{
-                    title: 'Hard Refresh', action: () => !refreshing && services.applications.get(application.metadata.name, 'hard'),
+                    title: 'Hard Refresh', action: () => !refreshing && services.applications.get(app.metadata.name, 'hard'),
                 }]} anchor={() => <i className='fa fa-caret-down'/>} /></React.Fragment>
             ),
             disabled: !!refreshing,
-            action: () => !refreshing && services.applications.get(application.metadata.name, 'normal'),
+            action: () => !refreshing && services.applications.get(app.metadata.name, 'normal'),
         }];
     }
 
     private filterTreeNode(node: ResourceTreeNode, filter: {kind: string[], health: string[], sync: string[]}): boolean {
         const syncStatuses = filter.sync.map((item) => item === 'OutOfSync' ? ['OutOfSync', 'Unknown'] : [item] ).reduce(
             (first, second) => first.concat(second), []);
-        const healthStatuses = filter.health.map((item) => item === 'Unhealthy' ? ['Unknown', 'Progressing', 'Degraded', 'Missing'] : [item] ).reduce(
-            (first, second) => first.concat(second), []);
 
         return (filter.kind.length === 0 || filter.kind.indexOf(node.kind) > -1) &&
                 (syncStatuses.length === 0 || node.root.hook ||  node.root.status && syncStatuses.indexOf(node.root.status) > -1) &&
-                (healthStatuses.length === 0 || node.root.hook || node.root.health && healthStatuses.indexOf(node.root.health.status) > -1);
+                (filter.health.length === 0 || node.root.hook || node.root.health && filter.health.indexOf(node.root.health.status) > -1);
     }
 
     private loadAppInfo(name: string): Observable<{application: appModels.Application, tree: appModels.ApplicationTree}> {
@@ -350,12 +386,16 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
                 const app = appInfo.app;
                 const fallbackTree: appModels.ApplicationTree = {
                     nodes: app.status.resources.map((res) => ({...res, parentRefs: [], info: [], resourceVersion: '', uid: ''})),
+                    orphanedNodes: [],
                 };
                 const treeSource = new Observable<{ application: appModels.Application, tree: appModels.ApplicationTree }>((observer) => {
                     services.applications.resourceTree(app.metadata.name)
                         .then((tree) => observer.next({ application: app, tree }))
-                        .catch((e) => observer.error(e));
-                }).repeat().retryWhen((errors) => errors.delay(500));
+                        .catch((e) => {
+                            observer.next({ application: app, tree: fallbackTree });
+                            observer.error(e);
+                        });
+                }).repeat().retryWhen((errors) => errors.delay(1000));
                 if (appInfo.watchEvent) {
                     return treeSource;
                 } else {
@@ -370,20 +410,13 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
     }
 
     private async updateApp(app: appModels.Application) {
-        try {
-            await services.applications.updateSpec(app.metadata.name, app.spec);
-            this.refreshRequested.next({});
-        } catch (e) {
-            this.appContext.apis.notifications.show({
-                content: <ErrorNotification title='Unable to update application' e={e}/>,
-                type: NotificationType.Error,
-            });
-        }
+        await services.applications.updateSpec(app.metadata.name, app.spec);
+        this.refreshRequested.next({});
     }
 
     private groupAppNodesByKey(application: appModels.Application, tree: appModels.ApplicationTree) {
         const nodeByKey = new Map<string, appModels.ResourceDiff | appModels.ResourceNode | appModels.Application>();
-        tree.nodes.forEach((node) => nodeByKey.set(nodeKey(node), node));
+        tree.nodes.concat(tree.orphanedNodes || []).forEach((node) => nodeByKey.set(nodeKey(node), node));
         nodeByKey.set(nodeKey({group: 'argoproj.io', kind: application.kind, name: application.metadata.name, namespace: application.metadata.namespace}), application);
         return nodeByKey;
     }
@@ -530,7 +563,7 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{ na
         await AppUtils.deleteApplication(this.props.match.params.name, this.appContext.apis);
     }
 
-    private getResourceTabs(application: appModels.Application, node: ResourceTreeNode, state: appModels.State, events: appModels.Event[], tabs: Tab[]) {
+    private getResourceTabs(application: appModels.Application, node: appModels.ResourceNode, state: appModels.State, events: appModels.Event[], tabs: Tab[]) {
         if (state) {
             const numErrors = events.filter((event) => event.type !== 'Normal').reduce((total, event) => total + event.count, 0);
             tabs.push({

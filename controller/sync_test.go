@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -12,13 +13,14 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakedisco "k8s.io/client-go/discovery/fake"
+	"k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/rest"
 	testcore "k8s.io/client-go/testing"
 
 	"github.com/argoproj/argo-cd/common"
 	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	. "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
-	"github.com/argoproj/argo-cd/reposerver/repository"
+	"github.com/argoproj/argo-cd/reposerver/apiclient"
 	"github.com/argoproj/argo-cd/test"
 	"github.com/argoproj/argo-cd/util/kube"
 	"github.com/argoproj/argo-cd/util/kube/kubetest"
@@ -71,8 +73,19 @@ func newTestSyncCtx(resources ...*v1.APIResourceList) *syncContext {
 		disco:   fakeDisco,
 		log:     log.WithFields(log.Fields{"application": "fake-app"}),
 	}
-	sc.kubectl = kubetest.MockKubectlCmd{}
+	sc.kubectl = &kubetest.MockKubectlCmd{}
 	return &sc
+}
+
+func newManagedResource(live *unstructured.Unstructured) managedResource {
+	return managedResource{
+		Live:      live,
+		Group:     live.GroupVersionKind().Group,
+		Version:   live.GroupVersionKind().Version,
+		Kind:      live.GroupVersionKind().Kind,
+		Namespace: live.GetNamespace(),
+		Name:      live.GetName(),
+	}
 }
 
 func TestSyncNotPermittedNamespace(t *testing.T) {
@@ -105,7 +118,7 @@ func TestSyncCreateInSortedOrder(t *testing.T) {
 		}},
 	}
 	syncCtx.sync()
-	assert.Equal(t, v1alpha1.OperationRunning, syncCtx.opState.Phase)
+	assert.Equal(t, v1alpha1.OperationSucceeded, syncCtx.opState.Phase)
 	assert.Len(t, syncCtx.syncRes.Resources, 2)
 	for i := range syncCtx.syncRes.Resources {
 		result := syncCtx.syncRes.Resources[i]
@@ -138,7 +151,7 @@ func TestSyncCreateNotWhitelistedClusterResources(t *testing.T) {
 		{Group: "argoproj.io", Kind: "*"},
 	}
 
-	syncCtx.kubectl = kubetest.MockKubectlCmd{}
+	syncCtx.kubectl = &kubetest.MockKubectlCmd{}
 	syncCtx.compareResult = &comparisonResult{
 		managedResources: []managedResource{{
 			Live: nil,
@@ -188,7 +201,7 @@ func TestSyncSuccessfully(t *testing.T) {
 		}},
 	}
 	syncCtx.sync()
-	assert.Equal(t, v1alpha1.OperationRunning, syncCtx.opState.Phase)
+	assert.Equal(t, v1alpha1.OperationSucceeded, syncCtx.opState.Phase)
 	assert.Len(t, syncCtx.syncRes.Resources, 2)
 	for i := range syncCtx.syncRes.Resources {
 		result := syncCtx.syncRes.Resources[i]
@@ -220,7 +233,7 @@ func TestSyncDeleteSuccessfully(t *testing.T) {
 		}},
 	}
 	syncCtx.sync()
-	assert.Equal(t, v1alpha1.OperationRunning, syncCtx.opState.Phase)
+	assert.Equal(t, v1alpha1.OperationSucceeded, syncCtx.opState.Phase)
 	for i := range syncCtx.syncRes.Resources {
 		result := syncCtx.syncRes.Resources[i]
 		if result.Kind == "Pod" {
@@ -238,7 +251,7 @@ func TestSyncDeleteSuccessfully(t *testing.T) {
 func TestSyncCreateFailure(t *testing.T) {
 	syncCtx := newTestSyncCtx()
 	testSvc := test.NewService()
-	syncCtx.kubectl = kubetest.MockKubectlCmd{
+	syncCtx.kubectl = &kubetest.MockKubectlCmd{
 		Commands: map[string]kubetest.KubectlOutput{
 			testSvc.GetName(): {
 				Output: "",
@@ -261,7 +274,7 @@ func TestSyncCreateFailure(t *testing.T) {
 
 func TestSyncPruneFailure(t *testing.T) {
 	syncCtx := newTestSyncCtx()
-	syncCtx.kubectl = kubetest.MockKubectlCmd{
+	syncCtx.kubectl = &kubetest.MockKubectlCmd{
 		Commands: map[string]kubetest.KubectlOutput{
 			"test-service": {
 				Output: "",
@@ -315,7 +328,7 @@ func TestDontPrunePruneFalse(t *testing.T) {
 
 	syncCtx.sync()
 
-	assert.Equal(t, v1alpha1.OperationRunning, syncCtx.opState.Phase)
+	assert.Equal(t, v1alpha1.OperationSucceeded, syncCtx.opState.Phase)
 	assert.Len(t, syncCtx.syncRes.Resources, 1)
 	assert.Equal(t, v1alpha1.ResultCodePruneSkipped, syncCtx.syncRes.Resources[0].Status)
 	assert.Equal(t, "ignored (no prune)", syncCtx.syncRes.Resources[0].Message)
@@ -323,6 +336,33 @@ func TestDontPrunePruneFalse(t *testing.T) {
 	syncCtx.sync()
 
 	assert.Equal(t, v1alpha1.OperationSucceeded, syncCtx.opState.Phase)
+}
+
+// make sure Validate=false means we don't validate
+func TestSyncOptionValidate(t *testing.T) {
+	tests := []struct {
+		name          string
+		annotationVal string
+		want          bool
+	}{
+		{"Empty", "", true},
+		{"True", "Validate=true", true},
+		{"False", "Validate=false", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			syncCtx := newTestSyncCtx()
+			pod := test.NewPod()
+			pod.SetAnnotations(map[string]string{common.AnnotationSyncOptions: tt.annotationVal})
+			pod.SetNamespace(test.FakeArgoCDNamespace)
+			syncCtx.compareResult = &comparisonResult{managedResources: []managedResource{{Target: pod, Live: pod}}}
+
+			syncCtx.sync()
+
+			kubectl, _ := syncCtx.kubectl.(*kubetest.MockKubectlCmd)
+			assert.Equal(t, tt.want, kubectl.LastValidate)
+		})
+	}
 }
 
 func TestSelectiveSyncOnly(t *testing.T) {
@@ -416,7 +456,7 @@ func TestPersistRevisionHistory(t *testing.T) {
 	}
 	data := fakeData{
 		apps: []runtime.Object{app, defaultProject},
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -453,7 +493,7 @@ func TestPersistRevisionHistoryRollback(t *testing.T) {
 	}
 	data := fakeData{
 		apps: []runtime.Object{app, defaultProject},
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -490,6 +530,94 @@ func TestPersistRevisionHistoryRollback(t *testing.T) {
 	assert.Equal(t, "abc123", updatedApp.Status.History[0].Revision)
 }
 
+func TestSyncFailureHookWithSuccessfulSync(t *testing.T) {
+	syncCtx := newTestSyncCtx()
+	syncCtx.syncOp.SyncStrategy.Apply = nil
+	syncCtx.compareResult = &comparisonResult{
+		managedResources: []managedResource{{Target: test.NewPod()}},
+		hooks:            []*unstructured.Unstructured{test.NewHook(HookTypeSyncFail)},
+	}
+
+	syncCtx.sync()
+
+	assert.Equal(t, OperationSucceeded, syncCtx.opState.Phase)
+	// only one result, we did not run the failure failureHook
+	assert.Len(t, syncCtx.syncRes.Resources, 1)
+}
+
+func TestSyncFailureHookWithFailedSync(t *testing.T) {
+	syncCtx := newTestSyncCtx()
+	syncCtx.syncOp.SyncStrategy.Apply = nil
+	pod := test.NewPod()
+	syncCtx.compareResult = &comparisonResult{
+		managedResources: []managedResource{{Target: pod}},
+		hooks:            []*unstructured.Unstructured{test.NewHook(HookTypeSyncFail)},
+	}
+	syncCtx.kubectl = &kubetest.MockKubectlCmd{
+		Commands: map[string]kubetest.KubectlOutput{pod.GetName(): {Err: fmt.Errorf("")}},
+	}
+
+	syncCtx.sync()
+	syncCtx.sync()
+
+	assert.Equal(t, OperationFailed, syncCtx.opState.Phase)
+	assert.Len(t, syncCtx.syncRes.Resources, 2)
+}
+
+func TestBeforeHookCreation(t *testing.T) {
+	syncCtx := newTestSyncCtx()
+	syncCtx.syncOp.SyncStrategy.Apply = nil
+	hook := test.Annotate(test.Annotate(test.NewPod(), common.AnnotationKeyHook, "Sync"), common.AnnotationKeyHookDeletePolicy, "BeforeHookCreation")
+	hook.SetNamespace(test.FakeArgoCDNamespace)
+	syncCtx.compareResult = &comparisonResult{
+		managedResources: []managedResource{newManagedResource(hook)},
+		hooks:            []*unstructured.Unstructured{hook},
+	}
+	syncCtx.dynamicIf = fake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	syncCtx.sync()
+	assert.Len(t, syncCtx.syncRes.Resources, 1)
+	assert.Empty(t, syncCtx.syncRes.Resources[0].Message)
+}
+
+func TestRunSyncFailHooksFailed(t *testing.T) {
+	// Tests that other SyncFail Hooks run even if one of them fail.
+
+	syncCtx := newTestSyncCtx()
+	syncCtx.syncOp.SyncStrategy.Apply = nil
+	pod := test.NewPod()
+	successfulSyncFailHook := test.NewHook(HookTypeSyncFail)
+	successfulSyncFailHook.SetName("successful-sync-fail-hook")
+	failedSyncFailHook := test.NewHook(HookTypeSyncFail)
+	failedSyncFailHook.SetName("failed-sync-fail-hook")
+	syncCtx.compareResult = &comparisonResult{
+		managedResources: []managedResource{{Target: pod}},
+		hooks:            []*unstructured.Unstructured{successfulSyncFailHook, failedSyncFailHook},
+	}
+
+	syncCtx.kubectl = &kubetest.MockKubectlCmd{
+		Commands: map[string]kubetest.KubectlOutput{
+			// Fail operation
+			pod.GetName(): {Err: fmt.Errorf("")},
+			// Fail a single SyncFail hook
+			failedSyncFailHook.GetName(): {Err: fmt.Errorf("")}},
+	}
+
+	syncCtx.sync()
+	syncCtx.sync()
+
+	fmt.Println(syncCtx.syncRes.Resources)
+	fmt.Println(syncCtx.opState.Phase)
+	// Operation as a whole should fail
+	assert.Equal(t, OperationFailed, syncCtx.opState.Phase)
+	// failedSyncFailHook should fail
+	assert.Equal(t, OperationFailed, syncCtx.syncRes.Resources[1].HookPhase)
+	assert.Equal(t, ResultCodeSyncFailed, syncCtx.syncRes.Resources[1].Status)
+	// successfulSyncFailHook should be synced running (it is an nginx pod)
+	assert.Equal(t, OperationRunning, syncCtx.syncRes.Resources[2].HookPhase)
+	assert.Equal(t, ResultCodeSynced, syncCtx.syncRes.Resources[2].Status)
+}
+
 func Test_syncContext_isSelectiveSync(t *testing.T) {
 	type fields struct {
 		compareResult *comparisonResult
@@ -522,6 +650,40 @@ func Test_syncContext_isSelectiveSync(t *testing.T) {
 			}
 			if got := sc.isSelectiveSync(); got != tt.want {
 				t.Errorf("syncContext.isSelectiveSync() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_syncContext_liveObj(t *testing.T) {
+	type fields struct {
+		compareResult *comparisonResult
+	}
+	type args struct {
+		obj *unstructured.Unstructured
+	}
+	obj := test.NewPod()
+	obj.SetNamespace("my-ns")
+
+	found := test.NewPod()
+
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   *unstructured.Unstructured
+	}{
+		{"None", fields{compareResult: &comparisonResult{managedResources: []managedResource{}}}, args{obj: &unstructured.Unstructured{}}, nil},
+		{"Found", fields{compareResult: &comparisonResult{managedResources: []managedResource{{Group: obj.GroupVersionKind().Group, Kind: obj.GetKind(), Namespace: obj.GetNamespace(), Name: obj.GetName(), Live: found}}}}, args{obj: obj}, found},
+		{"EmptyNamespace", fields{compareResult: &comparisonResult{managedResources: []managedResource{{Group: obj.GroupVersionKind().Group, Kind: obj.GetKind(), Name: obj.GetName(), Live: found}}}}, args{obj: obj}, found},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc := &syncContext{
+				compareResult: tt.fields.compareResult,
+			}
+			if got := sc.liveObj(tt.args.obj); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("syncContext.liveObj() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/argoproj/argo-cd/errors"
@@ -25,13 +24,16 @@ const (
 )
 
 // return an AccountServer which returns fake data
-func newTestAccountServer(ctx context.Context, objects ...runtime.Object) (*fake.Clientset, *Server, *session.Server) {
+func newTestAccountServer(ctx context.Context) (*fake.Clientset, *Server, *session.Server) {
 	bcrypt, err := password.HashPassword("oldpassword")
 	errors.CheckError(err)
 	kubeclientset := fake.NewSimpleClientset(&v1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "argocd-cm",
 			Namespace: testNamespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/part-of": "argocd",
+			},
 		},
 	}, &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{

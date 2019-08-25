@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/yudai/gojsondiff"
@@ -36,11 +37,11 @@ type Normalizer interface {
 // "kubectl.kubernetes.io/last-applied-configuration", then perform a three way diff.
 func Diff(config, live *unstructured.Unstructured, normalizer Normalizer) *DiffResult {
 	if config != nil {
-		config = stripTypeInformation(config)
+		config = remarshal(config)
 		Normalize(config, normalizer)
 	}
 	if live != nil {
-		live = stripTypeInformation(live)
+		live = remarshal(live)
 		Normalize(live, normalizer)
 	}
 	orig := GetLastAppliedConfigAnnotation(live)
@@ -386,7 +387,8 @@ func HideSecretData(target *unstructured.Unstructured, live *unstructured.Unstru
 	}
 
 	for k := range keys {
-		nextReplacement := "*********"
+		// we use "+" rather than the more common "*"
+		nextReplacement := "+++++++++"
 		valToReplacement := make(map[string]string)
 		for _, obj := range []*unstructured.Unstructured{target, live, orig} {
 			var data map[string]interface{}
@@ -408,7 +410,7 @@ func HideSecretData(target *unstructured.Unstructured, live *unstructured.Unstru
 			replacement, ok := valToReplacement[val]
 			if !ok {
 				replacement = nextReplacement
-				nextReplacement = nextReplacement + "*"
+				nextReplacement = nextReplacement + "+"
 				valToReplacement[val] = replacement
 			}
 			data[k] = replacement
@@ -438,4 +440,40 @@ func toString(val interface{}) string {
 		return ""
 	}
 	return fmt.Sprintf("%s", val)
+}
+
+// remarshal checks resource kind and version and re-marshal using corresponding struct custom marshaller.
+// This ensures that expected resource state is formatter same as actual resource state in kubernetes
+// and allows to find differences between actual and target states more accurately.
+// Remarshalling also strips any type information (e.g. float64 vs. int) from the unstructured
+// object. This is important for diffing since it will cause godiff to report a false difference.
+func remarshal(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	obj = stripTypeInformation(obj)
+	data, err := json.Marshal(obj)
+	if err != nil {
+		panic(err)
+	}
+	gvk := obj.GroupVersionKind()
+	item, err := scheme.Scheme.New(obj.GroupVersionKind())
+	if err != nil {
+		// this is common. the scheme is not registered
+		log.Debugf("Could not create new object of type %s: %v", gvk, err)
+		return obj
+	}
+	// This will drop any omitempty fields, perform resource conversion etc...
+	unmarshalledObj := reflect.New(reflect.TypeOf(item).Elem()).Interface()
+	err = json.Unmarshal(data, &unmarshalledObj)
+	if err != nil {
+		// User may have specified an invalid spec in git. Return original object
+		log.Warnf("Could not unmarshal to object of type %s: %v", gvk, err)
+		return obj
+	}
+	unstrBody, err := runtime.DefaultUnstructuredConverter.ToUnstructured(unmarshalledObj)
+	if err != nil {
+		log.Warnf("Could not unmarshal to object of type %s: %v", gvk, err)
+		return obj
+	}
+	// remove all default values specified by custom formatter (e.g. creationTimestamp)
+	unstrBody = jsonutil.RemoveMapFields(obj.Object, unstrBody)
+	return &unstructured.Unstructured{Object: unstrBody}
 }

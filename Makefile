@@ -8,6 +8,10 @@ GIT_COMMIT:=$(shell git rev-parse HEAD)
 GIT_TAG:=$(shell if [ -z "`git status --porcelain`" ]; then git describe --exact-match --tags HEAD 2>/dev/null; fi)
 GIT_TREE_STATE:=$(shell if [ -z "`git status --porcelain`" ]; then echo "clean" ; else echo "dirty"; fi)
 
+define run-in-dev-tool
+    docker run --rm -it -u $(shell id -u) -e HOME=/home/user -v ${CURRENT_DIR}:/go/src/github.com/argoproj/argo-cd -w /go/src/github.com/argoproj/argo-cd argocd-dev-tools bash -c "GOPATH=/go $(1)"
+endef
+
 PATH:=$(PATH):$(CURDIR)/hack
 
 # Use GOPATH from within docker, the project folder otherwise
@@ -15,11 +19,16 @@ VENDOR_DIR:=$(shell if [ -f /.dockerenv ]; then echo "$$GOPATH/src"; else echo '
 
 # docker image publishing options
 DOCKER_PUSH?=false
-IMAGE_TAG?=latest
+IMAGE_TAG?=
 # perform static compilation
 STATIC_BUILD?=true
 # build development images
 DEV_IMAGE?=false
+# lint is memory and CPU intensive, so we can limit on CI to mitigate OOM
+LINT_GOGC?=off
+LINT_CONCURRENCY?=8
+# Set timeout for linter
+LINT_DEADLINE?=1m0s
 
 HOST_OS?=$(shell eval $$(go env) && echo $$GOHOSTOS)
 HOST_ARCH?=$(shell eval $$(go env) && echo $$GOHOSTARCH)
@@ -69,13 +78,7 @@ openapigen:
 		--output-package $(PACKAGE)/pkg/apis/application/v1alpha1 \
 		--report-filename pkg/apis/api-rules/violation_exceptions.list
 
-	go run ./hack/update-openapi-validation/main.go \
-		manifests/crds/application-crd.yaml \
-		$(PACKAGE)/pkg/apis/application/v1alpha1.Application
-
-	go run ./hack/update-openapi-validation/main.go \
-		manifests/crds/appproject-crd.yaml \
-		$(PACKAGE)/pkg/apis/application/v1alpha1.AppProject
+	go run ./hack/gen-crd-spec/main.go
 
 .PHONY: clientgen
 clientgen:
@@ -86,8 +89,12 @@ clientgen:
 		application:v1alpha1 \
 		--go-header-file hack/custom-boilerplate.go.txt \
 
+.PHONY: codegen-local
+codegen-local: protogen clientgen openapigen manifests-local
+
 .PHONY: codegen
-codegen: protogen clientgen openapigen manifests
+codegen: dev-tools-image
+	$(call run-in-dev-tool,make codegen-local)
 
 .PHONY: cli
 cli: clean-debug | dist/packr
@@ -102,27 +109,35 @@ release-cli: clean-debug image
 
 .PHONY: argocd-util
 argocd-util: clean-debug
-	# Build argocd-util as a statically linked binary, so it could run within the
-	# alpine-based dex container (argoproj/argo-cd#844)
-	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
+	# Build argocd-util as a statically linked binary, so it could run within the alpine-based dex container (argoproj/argo-cd#844)
+	CGO_ENABLED=0 ${PACKR_CMD} build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-util ./cmd/argocd-util
 
-.PHONY: manifests
-manifests:
+.PHONY: dev-tools-image
+dev-tools-image:
+	docker build -t argocd-dev-tools ./hack -f ./hack/Dockerfile.dev-tools
+
+.PHONY: manifests-local
+manifests-local:
 	./hack/update-manifests.sh
 
-# NOTE: we use packr to do the build instead of go, since we embed swagger files
-# and policy.csv files into the go binary
+.PHONY: manifests
+manifests: dev-tools-image
+	$(call run-in-dev-tool,make manifests-local IMAGE_TAG='${IMAGE_TAG}')
+
+
+# NOTE: we use packr to do the build instead of go, since we embed swagger files and policy.csv
+# files into the go binary
 .PHONY: server
 server: clean-debug | dist/packr
 	CGO_ENABLED=0 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
 
 .PHONY: repo-server
-repo-server:
-	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
+repo-server: | dist/packr
+	CGO_ENABLED=0 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-repo-server ./cmd/argocd-repo-server
 
 .PHONY: controller
-controller:
-	CGO_ENABLED=0 ${PACKR_CMD} build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
+controller: | dist/packr
+	CGO_ENABLED=0 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
 
 .PHONY: image
 ifeq ($(DEV_IMAGE), true)
@@ -149,7 +164,7 @@ endif
 .PHONY: builder-image
 builder-image:
 	docker build -t $(IMAGE_PREFIX)argo-cd-ci-builder:$(IMAGE_TAG) --target builder .
-	docker push $(IMAGE_PREFIX)argo-cd-ci-builder:$(IMAGE_TAG)
+	@if [ "$(DOCKER_PUSH)" = "true" ] ; then docker push $(IMAGE_PREFIX)argo-cd-ci-builder:$(IMAGE_TAG) ; fi
 
 .PHONY: dep-ensure
 dep-ensure: dist/dep
@@ -159,7 +174,7 @@ dep-ensure: dist/dep
 lint: | dist/goimports dist/golangci-lint
 	# golangci-lint does not do a good job of formatting imports
 	dist/goimports -local github.com/argoproj/argo-cd -w `find . ! -path './vendor/*' ! -path './pkg/client/*' -type f -name '*.go'`
-	dist/golangci-lint run --fix --verbose
+	GOGC=$(LINT_GOGC) dist/golangci-lint run --fix --verbose --concurrency $(LINT_CONCURRENCY) --deadline $(LINT_DEADLINE)
 
 .PHONY: build
 build:
@@ -180,10 +195,15 @@ test-e2e: cli
 .PHONY: start-e2e
 start-e2e: cli
 	killall goreman || true
+	# check we can connect to Docker to start Redis
+	docker version
 	kubectl create ns argocd-e2e || true
-	kubens argocd-e2e
+	kubectl config set-context --current --namespace=argocd-e2e
 	kustomize build test/manifests/base | kubectl apply -f -
-	goreman start
+	# set paths for locally managed ssh known hosts and tls certs data
+	ARGOCD_SSH_DATA_PATH=/tmp/argo-e2e/app/config/ssh \
+	ARGOCD_TLS_DATA_PATH=/tmp/argo-e2e/app/config/tls \
+		goreman start
 
 # Cleans VSCode debug.test files from sub-dirs to prevent them from being
 # included in packr boxes
@@ -198,6 +218,9 @@ clean: clean-debug
 .PHONY: start
 start:
 	killall goreman || true
+	# check we can connect to Docker to start Redis
+	docker version
+	kubectl create ns argocd || true
 	kubens argocd
 	goreman start
 
@@ -258,7 +281,7 @@ endef
 assets/swagger.json: $(addprefix dist/swagger_out/,$(addsuffix .swagger.json,$(basename $(SERVER_PROTO_FILES)))) | dist/swagger dist/jq
 	@echo Consolidate Swagger specs into $@...
 	$(file >dist/empty-consolidated-swagger.json,$(EMPTY_CONSOLIDATED_SWAGGER))
-	dist/swagger mixin -c 24 dist/empty-consolidated-swagger.json $(sort $^) > dist/consolidated-swagger.json
+	dist/swagger mixin -c 26 dist/empty-consolidated-swagger.json $(sort $^) > dist/consolidated-swagger.json
 	dist/jq -r 'del(.definitions[].properties[]? | select(."$$ref"!=null and .description!=null).description) | del(.definitions[].properties[]? | select(."$$ref"!=null and .title!=null).title)' dist/consolidated-swagger.json > '$@'
 
 dist/dep:
@@ -340,3 +363,4 @@ dist/swagger:
 		chmod +x -- '$@' && \
 		'$@' version; \
 	} || { rm -f -- '$@' && exit 1; }
+release: pre-commit release-precheck image release-cli

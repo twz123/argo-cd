@@ -36,6 +36,7 @@ func NewCommand() *cobra.Command {
 		},
 	}
 
+	command.AddCommand(NewCompletionCommand())
 	command.AddCommand(NewVersionCmd(&clientOpts))
 	command.AddCommand(NewClusterCommand(&clientOpts, pathOpts))
 	command.AddCommand(NewApplicationCommand(&clientOpts))
@@ -46,6 +47,7 @@ func NewCommand() *cobra.Command {
 	command.AddCommand(NewProjectCommand(&clientOpts))
 	command.AddCommand(NewAccountCommand(&clientOpts))
 	command.AddCommand(NewLogoutCommand(&clientOpts))
+	command.AddCommand(NewCertCommand(&clientOpts))
 
 	defaultLocalConfigPath, err := localconfig.DefaultLocalConfigPath()
 	errors.CheckError(err)

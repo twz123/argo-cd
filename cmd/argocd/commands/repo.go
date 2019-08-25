@@ -23,7 +23,7 @@ import (
 func NewRepoCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
 	var command = &cobra.Command{
 		Use:   "repo",
-		Short: "Manage git repository credentials",
+		Short: "Manage git repository connection parameters",
 		Run: func(c *cobra.Command, args []string) {
 			c.HelpFunc()(c, args)
 			os.Exit(1)
@@ -39,45 +39,104 @@ func NewRepoCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
 // NewRepoAddCommand returns a new instance of an `argocd repo add` command
 func NewRepoAddCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
 	var (
-		repo                  appsv1.Repository
-		upsert                bool
-		sshPrivateKeyPath     string
-		insecureIgnoreHostKey bool
+		repo                           appsv1.Repository
+		upsert                         bool
+		sshPrivateKeyPath              string
+		insecureIgnoreHostKey          bool
+		insecureSkipServerVerification bool
+		tlsClientCertPath              string
+		tlsClientCertKeyPath           string
+		enableLfs                      bool
 	)
+
+	// For better readability and easier formatting
+	var repoAddExamples = `
+Add a SSH repository using a private key for authentication, ignoring the server's host key:",
+  $ argocd repo add git@git.example.com --insecure-ignore-host-key --ssh-private-key-path ~/id_rsa",
+Add a HTTPS repository using username/password and TLS client certificates:",
+  $ argocd repo add https://git.example.com --username git --password secret --tls-client-cert-path ~/mycert.crt --tls-client-cert-key-path ~/mycert.key",
+Add a HTTPS repository using username/password without verifying the server's TLS certificate:",
+  $ argocd repo add https://git.example.com --username git --password secret --insecure-skip-server-verification",
+`
+
 	var command = &cobra.Command{
-		Use:   "add REPO",
-		Short: "Add git repository credentials",
+		Use:     "add REPOURL",
+		Short:   "Add git repository connection parameters",
+		Example: repoAddExamples,
 		Run: func(c *cobra.Command, args []string) {
 			if len(args) != 1 {
 				c.HelpFunc()(c, args)
 				os.Exit(1)
 			}
+
+			// Repository URL
 			repo.Repo = args[0]
+
+			// Specifying ssh-private-key-path is only valid for SSH repositories
 			if sshPrivateKeyPath != "" {
-				keyData, err := ioutil.ReadFile(sshPrivateKeyPath)
-				if err != nil {
-					log.Fatal(err)
+				if ok, _ := git.IsSSHURL(repo.Repo); ok {
+					keyData, err := ioutil.ReadFile(sshPrivateKeyPath)
+					if err != nil {
+						log.Fatal(err)
+					}
+					repo.SSHPrivateKey = string(keyData)
+				} else {
+					err := fmt.Errorf("--ssh-private-key-path is only supported for SSH repositories.")
+					errors.CheckError(err)
 				}
-				repo.SSHPrivateKey = string(keyData)
 			}
+
+			// tls-client-cert-path and tls-client-cert-key-key-path must always be
+			// specified together
+			if (tlsClientCertPath != "" && tlsClientCertKeyPath == "") || (tlsClientCertPath == "" && tlsClientCertKeyPath != "") {
+				err := fmt.Errorf("--tls-client-cert-path and --tls-client-cert-key-path must be specified together")
+				errors.CheckError(err)
+			}
+
+			// Specifying tls-client-cert-path is only valid for HTTPS repositories
+			if tlsClientCertPath != "" {
+				if git.IsHTTPSURL(repo.Repo) {
+					tlsCertData, err := ioutil.ReadFile(tlsClientCertPath)
+					errors.CheckError(err)
+					tlsCertKey, err := ioutil.ReadFile(tlsClientCertKeyPath)
+					errors.CheckError(err)
+					repo.TLSClientCertData = string(tlsCertData)
+					repo.TLSClientCertKey = string(tlsCertKey)
+				} else {
+					err := fmt.Errorf("--tls-client-cert-path is only supported for HTTPS repositories")
+					errors.CheckError(err)
+				}
+			}
+
+			// InsecureIgnoreHostKey is deprecated and only here for backwards compat
 			repo.InsecureIgnoreHostKey = insecureIgnoreHostKey
-			// First test the repo *without* username/password. This gives us a hint on whether this
-			// is a private repo.
-			// NOTE: it is important not to run git commands to test git credentials on the user's
-			// system since it may mess with their git credential store (e.g. osx keychain).
-			// See issue #315
-			err := git.TestRepo(repo.Repo, "", "", repo.SSHPrivateKey, repo.InsecureIgnoreHostKey)
-			if err != nil {
-				if yes, _ := git.IsSSHURL(repo.Repo); yes {
-					// If we failed using git SSH credentials, then the repo is automatically bad
-					log.Fatal(err)
-				}
-				// If we can't test the repo, it's probably private. Prompt for credentials and
-				// let the server test it.
-				repo.Username, repo.Password = cli.PromptCredentials(repo.Username, repo.Password)
-			}
+			repo.Insecure = insecureSkipServerVerification
+			repo.EnableLFS = enableLfs
+
 			conn, repoIf := argocdclient.NewClientOrDie(clientOpts).NewRepoClientOrDie()
 			defer util.Close(conn)
+
+			// If the user set a username, but didn't supply password via --password,
+			// then we prompt for it
+			if repo.Username != "" && repo.Password == "" {
+				repo.Password = cli.PromptPassword(repo.Password)
+			}
+
+			// We let the server check access to the repository before adding it. If
+			// it is a private repo, but we cannot access with with the credentials
+			// that were supplied, we bail out.
+			repoAccessReq := repositorypkg.RepoAccessQuery{
+				Repo:              repo.Repo,
+				Username:          repo.Username,
+				Password:          repo.Password,
+				SshPrivateKey:     repo.SSHPrivateKey,
+				TlsClientCertData: repo.TLSClientCertData,
+				TlsClientCertKey:  repo.TLSClientCertKey,
+				Insecure:          repo.IsInsecure(),
+			}
+			_, err := repoIf.ValidateAccess(context.Background(), &repoAccessReq)
+			errors.CheckError(err)
+
 			repoCreateReq := repositorypkg.RepoCreateRequest{
 				Repo:   &repo,
 				Upsert: upsert,
@@ -90,7 +149,11 @@ func NewRepoAddCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
 	command.Flags().StringVar(&repo.Username, "username", "", "username to the repository")
 	command.Flags().StringVar(&repo.Password, "password", "", "password to the repository")
 	command.Flags().StringVar(&sshPrivateKeyPath, "ssh-private-key-path", "", "path to the private ssh key (e.g. ~/.ssh/id_rsa)")
-	command.Flags().BoolVar(&insecureIgnoreHostKey, "insecure-ignore-host-key", false, "disables SSH strict host key checking")
+	command.Flags().StringVar(&tlsClientCertPath, "tls-client-cert-path", "", "path to the TLS client cert (must be PEM format)")
+	command.Flags().StringVar(&tlsClientCertKeyPath, "tls-client-cert-key-path", "", "path to the TLS client cert's key path (must be PEM format)")
+	command.Flags().BoolVar(&insecureIgnoreHostKey, "insecure-ignore-host-key", false, "disables SSH strict host key checking (deprecated, use --insecure-skip-server-validation instead)")
+	command.Flags().BoolVar(&insecureSkipServerVerification, "insecure-skip-server-verification", false, "disables server certificate and host key checks")
+	command.Flags().BoolVar(&enableLfs, "enable-lfs", false, "enable git-lfs (Large File Support) on this repository")
 	command.Flags().BoolVar(&upsert, "upsert", false, "Override an existing repository with the same name even if the spec differs")
 	return command
 }
@@ -116,8 +179,34 @@ func NewRepoRemoveCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command
 	return command
 }
 
+// Print table of repo info
+func printRepoTable(repos []appsv1.Repository) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "REPO\tINSECURE\tLFS\tUSER\tSTATUS\tMESSAGE\n")
+	for _, r := range repos {
+		var username string
+		if r.Username == "" {
+			username = "-"
+		} else {
+			username = r.Username
+		}
+		fmt.Fprintf(w, "%s\t%v\t%v\t%s\t%s\t%s\n", r.Repo, r.IsInsecure(), r.EnableLFS, username, r.ConnectionState.Status, r.ConnectionState.Message)
+	}
+	_ = w.Flush()
+}
+
+// Print list of repo urls
+func printRepoUrls(repos []appsv1.Repository) {
+	for _, r := range repos {
+		fmt.Println(r.Repo)
+	}
+}
+
 // NewRepoListCommand returns a new instance of an `argocd repo rm` command
 func NewRepoListCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
+	var (
+		output string
+	)
 	var command = &cobra.Command{
 		Use:   "list",
 		Short: "List configured repositories",
@@ -126,13 +215,13 @@ func NewRepoListCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command {
 			defer util.Close(conn)
 			repos, err := repoIf.List(context.Background(), &repositorypkg.RepoQuery{})
 			errors.CheckError(err)
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "REPO\tUSER\tSTATUS\tMESSAGE\n")
-			for _, r := range repos.Items {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Repo, r.Username, r.ConnectionState.Status, r.ConnectionState.Message)
+			if output == "url" {
+				printRepoUrls(repos.Items)
+			} else {
+				printRepoTable(repos.Items)
 			}
-			_ = w.Flush()
 		},
 	}
+	command.Flags().StringVarP(&output, "output", "o", "wide", "Output format. One of: wide|url")
 	return command
 }

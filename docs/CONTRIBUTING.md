@@ -11,14 +11,12 @@ Then, to get a good grounding in Go, try out [the tutorial](https://tour.golang.
 Install:
 
 * [docker](https://docs.docker.com/install/#supported-platforms)
+* [git](https://git-scm.com/) and [git-lfs](https://git-lfs.github.com/)
 * [golang](https://golang.org/)
 * [dep](https://github.com/golang/dep)
-* [protobuf](https://developers.google.com/protocol-buffers/)
 * [ksonnet](https://github.com/ksonnet/ksonnet#install)
 * [helm](https://github.com/helm/helm/releases)
 * [kustomize](https://github.com/kubernetes-sigs/kustomize/releases)
-* [go-swagger](https://github.com/go-swagger/go-swagger/blob/master/docs/install.md)
-* [jq](https://stedolan.github.io/jq/)
 * [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
 * [kubectx](https://kubectx.dev)
 * [minikube](https://kubernetes.io/docs/setup/minikube/) or Docker for Desktop
@@ -26,12 +24,8 @@ Install:
 Brew users can quickly install the lot:
 
 ```bash
-brew tap go-swagger/go-swagger
-brew install go kubectl kubectx ksonnet/tap/ks kubernetes-helm kustomize 
+brew install git-lfs go kubectl kubectx ksonnet/tap/ks kubernetes-helm kustomize 
 ```
-
-!!! note "Kustomize"
-    Since Argo CD supports Kustomize v1.0 and v2.0, you will need to install both versions in order for the unit tests to run. The Kustomize 1 unit test expects to find a `kustomize1` binary in the path.  You can use this [link](https://github.com/argoproj/argo-cd/blob/master/Dockerfile#L66-L69) to find the Kustomize 1 currently used by Argo CD and modify the curl command to download the correct OS.
 
 Set up environment variables (e.g. is `~/.bashrc`):
 
@@ -47,21 +41,15 @@ go get -u github.com/argoproj/argo-cd
 cd $GOPATH/src/github.com/argoproj/argo-cd
 ```
 
-Install go dependencies:
+## Building
 
-```bash
-go get github.com/gobuffalo/packr/packr
-go get github.com/gogo/protobuf/gogoproto
-go get github.com/golang/protobuf/protoc-gen-go
-go get github.com/golangci/golangci-lint/cmd/golangci-lint
-go get github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway
-go get github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger
-go get github.com/jstemmer/go-junit-report
-go get github.com/mattn/goreman
-go get golang.org/x/tools/cmd/goimports
+Ensure dependencies are up to date first:
+
+```shell
+make dep
 ```
 
-## Building
+Build `cli`, `image`, and `argocd-util` as default targets by running make:
 
 ```bash
 make
@@ -69,7 +57,11 @@ make
 
 The make command can take a while, and we recommend building the specific component you are working on
 
-* `make codegen` - Builds protobuf and swagger files
+* `make codegen` - Builds protobuf and swagger files.
+
+Note: `make codegen` is slow because it uses docker + volume mounts. To improve performance you might install binaries from `./hack/Dockerfile.dev-tools`
+and use `make codegen-local`. It is still recommended to run `make codegen` once before sending PR to make sure correct version of codegen tools is used.   
+
 * `make cli` - Make the argocd CLI tool
 * `make server` - Make the API/repo/controller server
 * `make argocd-util` - Make the administrator's utility, used for certain tasks such as import/export

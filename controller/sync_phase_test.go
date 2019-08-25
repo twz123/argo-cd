@@ -35,12 +35,14 @@ func TestSyncPhasePost(t *testing.T) {
 	assert.Equal(t, []SyncPhase{SyncPhasePostSync}, syncPhases(pod("PostSync")))
 }
 
+func TestSyncPhaseFail(t *testing.T) {
+	assert.Equal(t, []SyncPhase{SyncPhaseSyncFail}, syncPhases(pod("SyncFail")))
+}
+
 func TestSyncPhaseTwoPhases(t *testing.T) {
-	assert.Equal(t, []SyncPhase{SyncPhasePreSync, SyncPhasePostSync}, syncPhases(pod("PreSync,PostSync")))
+	assert.ElementsMatch(t, []SyncPhase{SyncPhasePreSync, SyncPhasePostSync}, syncPhases(pod("PreSync,PostSync")))
 }
 
 func pod(hookType string) *unstructured.Unstructured {
-	pod := test.NewPod()
-	pod.SetAnnotations(map[string]string{"argocd.argoproj.io/hook": hookType})
-	return pod
+	return test.Annotate(test.NewPod(), "argocd.argoproj.io/hook", hookType)
 }

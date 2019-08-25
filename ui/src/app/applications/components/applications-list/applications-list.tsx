@@ -5,7 +5,7 @@ import * as React from 'react';
 import { RouteComponentProps } from 'react-router';
 import { Observable } from 'rxjs';
 
-import { Autocomplete, DataLoader, EmptyState, ObservableQuery, Page, Paginate, Query } from '../../../shared/components';
+import { Autocomplete, ClusterCtx, DataLoader, EmptyState, ObservableQuery, Page, Paginate, Query } from '../../../shared/components';
 import { Consumer } from '../../../shared/context';
 import * as models from '../../../shared/models';
 import { AppsListPreferences, AppsListViewType, services } from '../../../shared/services';
@@ -19,7 +19,8 @@ import { ApplicationTiles } from './applications-tiles';
 
 require('./applications-list.scss');
 
-const APP_FIELDS = ['metadata.name', 'metadata.resourceVersion', 'metadata.creationTimestamp', 'spec', 'status.sync.status', 'status.health', 'status.summary'];
+const APP_FIELDS = [
+    'metadata.name', 'metadata.annotations', 'metadata.resourceVersion', 'metadata.creationTimestamp', 'spec', 'status.sync.status', 'status.health', 'status.summary'];
 const APP_LIST_FIELDS = APP_FIELDS.map((field) => `items.${field}`);
 const APP_WATCH_FIELDS = ['result.type', ...APP_FIELDS.map((field) => `result.application.${field}`)];
 
@@ -111,6 +112,7 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
     const [createApi, setCreateApi] = React.useState(null);
 
     return (
+<ClusterCtx.Provider value={services.clusters.list()}>
 <Consumer>{
 (ctx) => (
     <Page title='Applications' toolbar={services.viewPreferences.getPreferences().map((pref) => ({
@@ -218,11 +220,13 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                         <ApplicationTiles
                                             applications={data}
                                             syncApplication={(appName) => ctx.navigation.goto('.', { syncApp: appName })}
+                                            refreshApplication={(appName) => services.applications.get(appName, 'normal')}
                                             deleteApplication={(appName) => AppUtils.deleteApplication(appName, ctx)}
                                         />
                                     ) || (
                                         <ApplicationsTable applications={data}
                                             syncApplication={(appName) => ctx.navigation.goto('.', { syncApp: appName })}
+                                            refreshApplication={(appName) => services.applications.get(appName, 'normal')}
                                             deleteApplication={(appName) => AppUtils.deleteApplication(appName, ctx)}
                                         />
                                     )
@@ -248,7 +252,7 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
             </DataLoader>
         )}
         </ObservableQuery>
-        <SlidingPanel isMiddle={true} isShown={!!appInput} onClose={() => ctx.navigation.goto('.', { new: null })} header={
+        <SlidingPanel isShown={!!appInput} onClose={() => ctx.navigation.goto('.', { new: null })} header={
             <div>
                 <button className='argo-button argo-button--base'
                         onClick={() => createApi && createApi.submitForm(null)}>
@@ -258,7 +262,9 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                 </button>
             </div>
         }>
-        {appInput && <ApplicationCreatePanel getFormApi={setCreateApi} createApp={ async (app) => {
+        {appInput && <ApplicationCreatePanel getFormApi={(api) => {
+            setCreateApi(api);
+        }} createApp={ async (app) => {
                 try {
                     await services.applications.create(app);
                     ctx.navigation.goto('.', { new: null });
@@ -274,5 +280,6 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
         </SlidingPanel>
     </Page>
 )}
-</Consumer>);
+</Consumer>
+</ClusterCtx.Provider>);
 };

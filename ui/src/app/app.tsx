@@ -1,26 +1,36 @@
-import { Layout, NavigationManager, Notifications, NotificationsManager, PageContext, Popup, PopupManager, PopupProps } from 'argo-ui';
+import {
+    DataLoader,
+    Layout,
+    NavigationManager,
+    Notifications,
+    NotificationsManager,
+    PageContext,
+    Popup,
+    PopupManager,
+    PopupProps,
+} from 'argo-ui';
 import * as cookie from 'cookie';
-import { createBrowserHistory } from 'history';
+import {createBrowserHistory} from 'history';
 import * as jwtDecode from 'jwt-decode';
 import * as PropTypes from 'prop-types';
 import * as React from 'react';
-import { Helmet } from 'react-helmet';
-import { Redirect, Route, RouteComponentProps, Router, Switch } from 'react-router';
+import {Helmet} from 'react-helmet';
+import {Redirect, Route, RouteComponentProps, Router, Switch} from 'react-router';
 
-import { services } from './shared/services';
+import applications from './applications';
+import help from './help';
+import login from './login';
+import settings from './settings';
+import {Provider} from './shared/context';
+import {services} from './shared/services';
 import requests from './shared/services/requests';
+import {hashCode} from './shared/utils';
 
 services.viewPreferences.init();
 const bases = document.getElementsByTagName('base');
 const base = bases.length > 0 ? bases[0].getAttribute('href') || '/' : '/';
 export const history = createBrowserHistory({ basename: base });
 requests.setApiRoot(`${base}api/v1`);
-
-import applications from './applications';
-import help from './help';
-import login from './login';
-import settings from './settings';
-import { Provider } from './shared/context';
 
 const routes: {[path: string]: { component: React.ComponentType<RouteComponentProps<any>>, noLayout?: boolean } } = {
     '/login': { component: login.component as any, noLayout: true },
@@ -74,11 +84,15 @@ requests.onError.subscribe(async (err) => {
     }
 });
 
-export class App extends React.Component<{}, { popupProps: PopupProps }> {
+export class App extends React.Component<{}, { popupProps: PopupProps, error: Error }> {
     public static childContextTypes = {
         history: PropTypes.object,
         apis: PropTypes.object,
     };
+
+    public static getDerivedStateFromError(error: Error) {
+        return { error };
+    }
 
     private popupManager: PopupManager;
     private notificationsManager: NotificationsManager;
@@ -86,17 +100,51 @@ export class App extends React.Component<{}, { popupProps: PopupProps }> {
 
     constructor(props: {}) {
         super(props);
-        this.state = { popupProps: null };
+        this.state = { popupProps: null, error: null };
         this.popupManager = new PopupManager();
         this.notificationsManager = new NotificationsManager();
         this.navigationManager = new NavigationManager(history);
     }
 
-    public componentDidMount() {
+    public async componentDidMount() {
         this.popupManager.popupProps.subscribe((popupProps) => this.setState({ popupProps }));
+        const gaSettings = await services.authService.settings().then((item) => item.googleAnalytics || {  trackingID: '', anonymizeUsers: true });
+        const { trackingID, anonymizeUsers } = gaSettings;
+        if (trackingID) {
+            const ga = await import('react-ga');
+            ga.initialize(trackingID);
+            let userId = '';
+            const trackPageView = () => {
+                let nextUserId = services.authService.getCurrentUserId();
+                if (anonymizeUsers) {
+                   nextUserId = hashCode(nextUserId).toString();
+                }
+                if (nextUserId !== userId) {
+                    userId = nextUserId;
+                    ga.set({ userId });
+                }
+                ga.pageview(location.pathname + location.search);
+            };
+            trackPageView();
+            history.listen(trackPageView);
+        }
     }
 
     public render() {
+        if (this.state.error != null) {
+            const stack = this.state.error.stack;
+            const url = 'https://github.com/argoproj/argo-cd/issues/new?labels=bug&template=bug_report.md';
+
+            return (
+                <React.Fragment>
+                    <p>Something went wrong!</p>
+                    <p>Consider submitting an issue <a href={url}>here</a>.</p><br />
+                    <p>Stacktrace:</p>
+                    <pre>{stack}</pre>
+                </React.Fragment>
+            );
+        }
+
         return (
             <React.Fragment>
                 <Helmet>
@@ -126,6 +174,13 @@ export class App extends React.Component<{}, { popupProps: PopupProps }> {
                             <Redirect path='*' to='/'/>
                         </Switch>
                     </Router>
+                    <DataLoader load={() => services.authService.settings()}>{(s) => (
+                        s.help && s.help.chatUrl && <div style={{position: 'fixed', right: 10, bottom: 10}}>
+                            <a href={s.help.chatUrl} className='argo-button argo-button--special'>
+                                <i className='fas fa-comment-alt'/> {s.help.chatText}
+                            </a>
+                        </div> || null
+                    )}</DataLoader>
                 </Provider>
                 </PageContext.Provider>
                 <Notifications notifications={this.notificationsManager.notifications}/>

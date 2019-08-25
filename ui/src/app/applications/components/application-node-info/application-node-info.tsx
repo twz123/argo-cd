@@ -1,10 +1,10 @@
-import { Tab, Tabs } from 'argo-ui';
+import { DataLoader, Tab, Tabs } from 'argo-ui';
 import * as React from 'react';
 
 import { YamlEditor } from '../../../shared/components';
 import * as models from '../../../shared/models';
 import { services } from '../../../shared/services';
-import { ApplicationResourceDiff } from '../application-resource-diff/application-resource-diff';
+import { ApplicationResourcesDiff } from '../application-resources-diff/application-resources-diff';
 import { ComparisonStatusIcon, getPodStateReason, HealthStatusIcon } from '../utils';
 
 require('./application-node-info.scss');
@@ -48,7 +48,7 @@ export const ApplicationNodeInfo = (props: {
     if (props.controlled) {
         if (!props.controlled.summary.hook) {
             attributes.push({title: 'STATUS', value: (
-                <span><ComparisonStatusIcon status={props.controlled.summary.status}/> {props.controlled.summary.status}</span>
+                <span><ComparisonStatusIcon status={props.controlled.summary.status} resource={props.controlled.summary} label={true}/></span>
             )} as any);
         }
         if (props.controlled.summary.health !== undefined) {
@@ -72,8 +72,9 @@ export const ApplicationNodeInfo = (props: {
     if (props.controlled && !props.controlled.summary.hook) {
         tabs.push({
             key: 'diff',
+            icon: 'fa fa-file-medical',
             title: 'Diff',
-            content: <ApplicationResourceDiff state={props.controlled.state}/>,
+            content: <ApplicationResourcesDiff states={[props.controlled.state]}/>,
         });
     }
 
@@ -93,7 +94,11 @@ export const ApplicationNodeInfo = (props: {
             </div>
 
             <div className='application-node-info__manifest'>
-                <Tabs selectedTabKey={tabs[0].key} tabs={tabs} />
+                <DataLoader load={() => services.viewPreferences.getPreferences()}>
+                {(pref) => <Tabs selectedTabKey={tabs.length > 1 && pref.appDetails.resourceView || 'manifest'} tabs={tabs}  onTabSelected={(selected) => {
+                        services.viewPreferences.updatePreferences({ appDetails: { ...pref.appDetails, resourceView: selected as any } });
+                }} />}
+                </DataLoader>
             </div>
         </div>
     );

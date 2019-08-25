@@ -20,29 +20,12 @@ commands:
             git config --global user.name "Your Name"
             echo "export PATH=/home/circleci/.go_workspace/src/github.com/argoproj/argo-cd/hack:\$PATH" | tee -a $BASH_ENV
             echo "export GIT_ASKPASS=git-ask-pass.sh" | tee -a $BASH_ENV
-      - run:
-          name: Make sure we can clone out the test private repo
-          command: |
-            set -x
-              export GIT_USERNAME=blah
-              export GIT_PASSWORD=B5sBDeoqAVUouoHkrovy
-              git-ask-pass.sh Username
-              git-ask-pass.sh Password
-              git clone https://gitlab.com/argo-cd-test/test-apps.git /tmp/test-apps
   clean_checkout:
     steps:
       - run:
           name: Remove checked out code
           command: rm -Rf /home/circleci/.go_workspace/src/github.com/argoproj/argo-cd
       - checkout
-  install_go_deps:
-    steps:
-      - run:
-          name: Install Go deps
-          command: |
-            set -x
-            go get github.com/jstemmer/go-junit-report
-            go get github.com/mattn/goreman
   dep_ensure:
     steps:
       - restore_cache:
@@ -62,12 +45,12 @@ commands:
   install_golang:
     steps:
       - run:
-          name: Install Golang v1.11.4
+          name: Install Golang v1.12.6
           command: |
-            go get golang.org/dl/go1.11.4
-            [ -e /home/circleci/sdk/go1.11.4 ] || go1.11.4 download
+            go get golang.org/dl/go1.12.6
+            [ -e /home/circleci/sdk/go1.12.6 ] || go1.12.6 download
             echo "export GOPATH=/home/circleci/.go_workspace" | tee -a $BASH_ENV
-            echo "export PATH=/home/circleci/sdk/go1.11.4/bin:\$PATH" | tee -a $BASH_ENV
+            echo "export PATH=/home/circleci/sdk/go1.12.6/bin:\$PATH" | tee -a $BASH_ENV
       - run:
           name: Golang diagnostics
           command: |
@@ -75,6 +58,14 @@ commands:
             which go
             go version
             go env
+  install_go_deps:
+    steps:
+      - run:
+          name: Install Go deps
+          command: |
+            set -x
+            go get github.com/jstemmer/go-junit-report
+            go get github.com/mattn/goreman
   install_tools:
     steps:
       - run:
@@ -82,11 +73,7 @@ commands:
           command: mkdir -p /tmp/dl
       - restore_cache:
           keys:
-            - dl-v4
-            - dl-v3
-      - run:
-          name: Install jq
-          command: make dist/jq
+            - dl-v6
       - run:
           name: Install Kubectx v0.6.3
           command: |
@@ -98,9 +85,6 @@ commands:
             sudo mv kubectx-0.6.3/kubens /usr/local/bin/
             sudo chmod +x /usr/local/bin/kubectx
             sudo chmod +x /usr/local/bin/kubens
-      - run:
-          name: Install Go Swagger
-          command: make dist/swagger
       - run:
           name: Install Ksonnet v0.13.1
           command: |
@@ -120,43 +104,35 @@ commands:
             helm version --client
             helm init --client-only
       - run:
-          name: Install Kustomize v1.0.11
+          name: Install Kustomize v3.1.0
           command: |
             set -x
-            [ -e /tmp/dl/kustomize1 ] || curl -sLf -C - -o /tmp/dl/kustomize1 https://github.com/kubernetes-sigs/kustomize/releases/download/v1.0.11/kustomize_1.0.11_linux_amd64
-            sudo cp /tmp/dl/kustomize1 /usr/local/go/bin/
-            sudo chmod +x /usr/local/go/bin/kustomize1
-            kustomize1 version
-      - run:
-          name: Install Kustomize v2.0.3
-          command: |
-            set -x
-            [ -e /tmp/dl/kustomize ] || curl -sLf -C - -o /tmp/dl/kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/v2.0.3/kustomize_2.0.3_linux_amd64
-            sudo cp /tmp/dl/kustomize /usr/local/go/bin/
+            export VER=3.1.0
+            [ -e /tmp/dl/kustomize_${VER} ] || curl -sLf -C - -o /tmp/dl/kustomize_${VER} https://github.com/kubernetes-sigs/kustomize/releases/download/v${VER}/kustomize_${VER}_linux_amd64
+            sudo cp /tmp/dl/kustomize_${VER} /usr/local/go/bin/kustomize
             sudo chmod +x /usr/local/go/bin/kustomize
             kustomize version
-      - run:
-          name: Install Protocol Buffers Compiler
-          command: make dist/protoc
       - save_cache:
-          key: dl-v4
+          key: dl-v6
           paths:
             - /tmp/dl
             - dist
   save_go_cache:
     steps:
       - save_cache:
-          key: go-v15-{{ .Branch }}
+          key: go-v17-{{ .Branch }}
           paths:
             - /home/circleci/.go_workspace
             - /home/circleci/.cache/go-build
-            - /home/circleci/sdk/go1.11.4
+            - /home/circleci/sdk/go1.12.6
   restore_go_cache:
     steps:
       - restore_cache:
           keys:
-            - go-v15-{{ .Branch }}
-            - go-v15-master
+            - go-v17-{{ .Branch }}
+            - go-v17-master
+            - go-v16-{{ .Branch }}
+            - go-v16-master
 jobs:
   build:
     working_directory: /home/circleci/.go_workspace/src/github.com/argoproj/argo-cd
@@ -184,7 +160,9 @@ jobs:
           command: make codegen
       - run:
           name: Lint code
-          command: make lint
+          # use GOGC to limit memory usage in exchange for CPU usage, https://github.com/golangci/golangci-lint#memory-usage-of-golangci-lint
+          # we have 8GB RAM, 2CPUs https://circleci.com/docs/2.0/executor-types/#using-machine
+          command: LINT_GOGC=20 LINT_CONCURRENCY=1 LINT_DEADLINE=3m0s make lint
       - run:
           name: Check nothing has changed
           command: |
@@ -193,7 +171,7 @@ jobs:
             # We exclude the Swagger resources; CircleCI doesn't generate them correctly.
             # When this fails, it will, create a patch file you can apply locally to fix it.
             # To troubleshoot builds: https://argoproj.github.io/argo-cd/developer-guide/ci/
-            git diff --exit-code -- . ':!Gopkg.lock' ':!assets/swagger.json' ':!pkg/apis/api-rules/violation_exceptions.list' ':!pkg/apis/application/v1alpha1/openapi_generated.go' | tee codegen.patch
+            git diff --exit-code -- . ':!Gopkg.lock'  ':!assets/swagger.json' | tee codegen.patch
       - store_artifacts:
           path: codegen.patch
           when: always
@@ -247,12 +225,21 @@ jobs:
           environment:
             # pft. if you do not quote "true", CircleCI turns it into "1", stoopid
             ARGOCD_FAKE_IN_CLUSTER: "true"
+            ARGOCD_SSH_DATA_PATH: "/tmp/argo-e2e/app/config/ssh"
+            ARGOCD_TLS_DATA_PATH: "/tmp/argo-e2e/app/config/tls"
       - run:
           name: Start API server
           command: go run ./cmd/argocd-server/main.go --loglevel debug --redis localhost:6379 --insecure --dex-server http://localhost:5556 --repo-server localhost:8081 --staticassets ../argo-cd-ui/dist/app
           background: true
           environment:
             ARGOCD_FAKE_IN_CLUSTER: "true"
+            ARGOCD_SSH_DATA_PATH: "/tmp/argo-e2e/app/config/ssh"
+            ARGOCD_TLS_DATA_PATH: "/tmp/argo-e2e/app/config/tls"
+      - run:
+          name: Start Test Git
+          command: |
+            test/fixture/testrepos/start-git.sh
+          background: true
       - run:
           name: Wait for API server
           command: |
@@ -281,6 +268,8 @@ jobs:
             make test-e2e | tee /tmp/test-results/go-e2e.out
           environment:
             ARGOCD_OPTS: "--server localhost:8080 --plaintext"
+            ARGOCD_E2E_EXPECT_TIMEOUT: "30"
+            ARGOCD_E2E_K3S: "true"
       - store_test_results:
           path: /tmp/test-results
   ui:
@@ -311,6 +300,9 @@ jobs:
       # This does not appear to work, and I don't want to spend time on it.
       - store_test_results:
           path: junit.xml
+      - run:
+          name: Build
+          command: yarn build
       - run:
           name: Lint
           command: yarn lint

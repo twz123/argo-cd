@@ -3,31 +3,39 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"os"
 	"path"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/pointer"
 
 	"github.com/argoproj/argo-cd/common"
 	"github.com/argoproj/argo-cd/errors"
 	applicationpkg "github.com/argoproj/argo-cd/pkg/apiclient/application"
 	repositorypkg "github.com/argoproj/argo-cd/pkg/apiclient/repository"
 	. "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
-	argorepo "github.com/argoproj/argo-cd/reposerver/repository"
+	"github.com/argoproj/argo-cd/reposerver/apiclient"
 	"github.com/argoproj/argo-cd/test/e2e/fixture"
 	. "github.com/argoproj/argo-cd/test/e2e/fixture/app"
 	"github.com/argoproj/argo-cd/util"
 	. "github.com/argoproj/argo-cd/util/argo"
 	"github.com/argoproj/argo-cd/util/diff"
 	"github.com/argoproj/argo-cd/util/kube"
+	"github.com/argoproj/argo-cd/util/settings"
 )
 
 const (
-	guestbookPath = "guestbook"
+	guestbookPath      = "guestbook"
+	guestbookPathLocal = "./testdata/guestbook_local"
 )
 
 func TestAppCreation(t *testing.T) {
@@ -39,7 +47,7 @@ func TestAppCreation(t *testing.T) {
 		Expect(SyncStatusIs(SyncStatusCodeOutOfSync)).
 		And(func(app *Application) {
 			assert.Equal(t, fixture.Name(), app.Name)
-			assert.Equal(t, fixture.RepoURL(), app.Spec.Source.RepoURL)
+			assert.Equal(t, fixture.RepoURL(fixture.RepoURLTypeFile), app.Spec.Source.RepoURL)
 			assert.Equal(t, guestbookPath, app.Spec.Source.Path)
 			assert.Equal(t, fixture.DeploymentNamespace(), app.Spec.Destination.Namespace)
 			assert.Equal(t, common.KubernetesInternalAPIServerAddr, app.Spec.Destination.Server)
@@ -51,6 +59,64 @@ func TestAppCreation(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Contains(t, output, fixture.Name())
 		})
+}
+
+// demonstrate that we cannot use a standard sync when an immutable field is changed, we must use "force"
+func TestImmutableChange(t *testing.T) {
+	text := errors.FailOnErr(fixture.Run(".", "kubectl", "get", "service", "-n", "kube-system", "kube-dns", "-o", "jsonpath={.spec.clusterIP}")).(string)
+	parts := strings.Split(text, ".")
+	n := rand.Intn(254)
+	ip1 := fmt.Sprintf("%s.%s.%s.%d", parts[0], parts[1], parts[2], n)
+	ip2 := fmt.Sprintf("%s.%s.%s.%d", parts[0], parts[1], parts[2], n+1)
+	Given(t).
+		Path("service").
+		When().
+		Create().
+		PatchFile("service.yaml", fmt.Sprintf(`[{"op": "add", "path": "/spec/clusterIP", "value": "%s"}]`, ip1)).
+		Sync().
+		Then().
+		Expect(OperationPhaseIs(OperationSucceeded)).
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		Expect(HealthIs(HealthStatusHealthy)).
+		When().
+		PatchFile("service.yaml", fmt.Sprintf(`[{"op": "add", "path": "/spec/clusterIP", "value": "%s"}]`, ip2)).
+		IgnoreErrors().
+		Sync().
+		DoNotIgnoreErrors().
+		Then().
+		Expect(OperationPhaseIs(OperationFailed)).
+		Expect(SyncStatusIs(SyncStatusCodeOutOfSync)).
+		Expect(ResourceResultNumbering(1)).
+		Expect(ResourceResultIs(ResourceResult{
+			Kind:      "Service",
+			Version:   "v1",
+			Namespace: fixture.DeploymentNamespace(),
+			Name:      "my-service",
+			SyncPhase: "Sync",
+			Status:    "SyncFailed",
+			HookPhase: "Failed",
+			Message:   fmt.Sprintf(`kubectl failed exit status 1: The Service "my-service" is invalid: spec.clusterIP: Invalid value: "%s": field is immutable`, ip2),
+		})).
+		// now we can do this will a force
+		Given().
+		Force().
+		When().
+		Sync().
+		Then().
+		Expect(OperationPhaseIs(OperationSucceeded)).
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		Expect(HealthIs(HealthStatusHealthy))
+}
+
+func TestInvalidAppProject(t *testing.T) {
+	Given(t).
+		Path(guestbookPath).
+		Project("does-not-exist").
+		When().
+		IgnoreErrors().
+		Create().
+		Then().
+		Expect(Error("", "application references project does-not-exist which does not exist"))
 }
 
 func TestAppDeletion(t *testing.T) {
@@ -78,6 +144,10 @@ func TestTrackAppStateAndSyncApp(t *testing.T) {
 		Create().
 		Sync().
 		Then().
+		Expect(Success(fmt.Sprintf("apps  Deployment  %s          guestbook-ui  OutOfSync  Missing", fixture.DeploymentNamespace()))).
+		Expect(Success(fmt.Sprintf("Service  %s          guestbook-ui  OutOfSync  Missing", fixture.DeploymentNamespace()))).
+		Expect(Success(fmt.Sprintf("Service     %s  guestbook-ui  Synced  Healthy        service/guestbook-ui created", fixture.DeploymentNamespace()))).
+		Expect(Success(fmt.Sprintf("apps   Deployment  %s  guestbook-ui  Synced  Healthy        deployment.apps/guestbook-ui created", fixture.DeploymentNamespace()))).
 		Expect(OperationPhaseIs(OperationSucceeded)).
 		Expect(SyncStatusIs(SyncStatusCodeSynced)).
 		Expect(Event(EventReasonResourceUpdated, "sync")).
@@ -137,29 +207,21 @@ func TestComparisonFailsIfClusterNotAdded(t *testing.T) {
 		Path(guestbookPath).
 		DestServer("https://not-registered-cluster/api").
 		When().
+		IgnoreErrors().
 		Create().
 		Then().
 		Expect(DoesNotExist())
 }
 
-func TestArgoCDWaitEnsureAppIsNotCrashing(t *testing.T) {
+func TestCannotSetInvalidPath(t *testing.T) {
 	Given(t).
 		Path(guestbookPath).
 		When().
 		Create().
-		Sync().
+		IgnoreErrors().
+		AppSet("--path", "garbage").
 		Then().
-		Expect(SyncStatusIs(SyncStatusCodeSynced)).
-		Expect(HealthIs(HealthStatusHealthy)).
-		And(func(app *Application) {
-			_, err := fixture.RunCli("app", "set", app.Name, "--path", "crashing-guestbook")
-			assert.NoError(t, err)
-		}).
-		When().
-		Sync().
-		Then().
-		Expect(SyncStatusIs(SyncStatusCodeSynced)).
-		Expect(HealthIs(HealthStatusDegraded))
+		Expect(Error("", "app path does not exist"))
 }
 
 func TestManipulateApplicationResources(t *testing.T) {
@@ -205,6 +267,30 @@ func TestManipulateApplicationResources(t *testing.T) {
 		Expect(SyncStatusIs(SyncStatusCodeOutOfSync))
 }
 
+func assetSecretDataHidden(t *testing.T, manifest string) {
+	secret, err := UnmarshalToUnstructured(manifest)
+	assert.NoError(t, err)
+
+	_, hasStringData, err := unstructured.NestedMap(secret.Object, "stringData")
+	assert.NoError(t, err)
+	assert.False(t, hasStringData)
+
+	secretData, hasData, err := unstructured.NestedMap(secret.Object, "data")
+	assert.NoError(t, err)
+	assert.True(t, hasData)
+	for _, v := range secretData {
+		assert.Regexp(t, regexp.MustCompile(`[*]*`), v)
+	}
+	var lastAppliedConfigAnnotation string
+	annotations := secret.GetAnnotations()
+	if annotations != nil {
+		lastAppliedConfigAnnotation = annotations[v1.LastAppliedConfigAnnotation]
+	}
+	if lastAppliedConfigAnnotation != "" {
+		assetSecretDataHidden(t, lastAppliedConfigAnnotation)
+	}
+}
+
 func TestAppWithSecrets(t *testing.T) {
 	closer, client, err := fixture.ArgoCDClientset.NewApplicationClient()
 	assert.NoError(t, err)
@@ -218,6 +304,17 @@ func TestAppWithSecrets(t *testing.T) {
 		Then().
 		Expect(SyncStatusIs(SyncStatusCodeSynced)).
 		And(func(app *Application) {
+			res, err := client.GetResource(context.Background(), &applicationpkg.ApplicationResourceRequest{
+				Namespace:    app.Spec.Destination.Namespace,
+				Kind:         kube.SecretKind,
+				Group:        "",
+				Name:         &app.Name,
+				Version:      "v1",
+				ResourceName: "test-secret",
+			})
+			assert.NoError(t, err)
+
+			assetSecretDataHidden(t, res.Manifest)
 
 			diffOutput, err := fixture.RunCli("app", "diff", app.Name)
 			assert.NoError(t, err)
@@ -236,7 +333,7 @@ func TestAppWithSecrets(t *testing.T) {
 
 			diffOutput, err := fixture.RunCli("app", "diff", app.Name)
 			assert.Error(t, err)
-			assert.Contains(t, diffOutput, "username: '*********'")
+			assert.Contains(t, diffOutput, "username: +++++++++")
 
 			// local diff should ignore secrets
 			diffOutput, err = fixture.RunCli("app", "diff", app.Name, "--local", "testdata/secrets")
@@ -282,7 +379,8 @@ func TestResourceDiffing(t *testing.T) {
 		Then().
 		Expect(SyncStatusIs(SyncStatusCodeOutOfSync)).
 		And(func(app *Application) {
-			diffOutput, _ := fixture.RunCli("app", "diff", app.Name, "--local", "testdata/guestbook")
+			diffOutput, err := fixture.RunCli("app", "diff", app.Name, "--local", "testdata/guestbook")
+			assert.Error(t, err)
 			assert.Contains(t, diffOutput, fmt.Sprintf("===== apps/Deployment %s/guestbook-ui ======", fixture.DeploymentNamespace()))
 		}).
 		Given().
@@ -299,19 +397,19 @@ func TestResourceDiffing(t *testing.T) {
 }
 
 func TestDeprecatedExtensions(t *testing.T) {
-	testEdgeCasesApplicationResources(t, "deprecated-extensions", OperationRunning, HealthStatusProgressing)
+	testEdgeCasesApplicationResources(t, "deprecated-extensions", HealthStatusProgressing)
 }
 
 func TestCRDs(t *testing.T) {
-	testEdgeCasesApplicationResources(t, "crd-creation", OperationSucceeded, HealthStatusHealthy)
+	testEdgeCasesApplicationResources(t, "crd-creation", HealthStatusHealthy)
 }
 
 func TestDuplicatedResources(t *testing.T) {
-	testEdgeCasesApplicationResources(t, "duplicated-resources", OperationSucceeded, HealthStatusHealthy)
+	testEdgeCasesApplicationResources(t, "duplicated-resources", HealthStatusHealthy)
 }
 
 func TestConfigMap(t *testing.T) {
-	testEdgeCasesApplicationResources(t, "config-map", OperationSucceeded, HealthStatusHealthy)
+	testEdgeCasesApplicationResources(t, "config-map", HealthStatusHealthy)
 }
 
 func TestFailedConversion(t *testing.T) {
@@ -320,17 +418,17 @@ func TestFailedConversion(t *testing.T) {
 		errors.FailOnErr(fixture.Run("", "kubectl", "delete", "apiservice", "v1beta1.metrics.k8s.io"))
 	}()
 
-	testEdgeCasesApplicationResources(t, "failed-conversion", OperationSucceeded, HealthStatusHealthy)
+	testEdgeCasesApplicationResources(t, "failed-conversion", HealthStatusProgressing)
 }
 
-func testEdgeCasesApplicationResources(t *testing.T, appPath string, phase OperationPhase, statusCode HealthStatusCode) {
+func testEdgeCasesApplicationResources(t *testing.T, appPath string, statusCode HealthStatusCode) {
 	Given(t).
 		Path(appPath).
 		When().
 		Create().
 		Sync().
 		Then().
-		Expect(OperationPhaseIs(phase)).
+		Expect(OperationPhaseIs(OperationSucceeded)).
 		Expect(SyncStatusIs(SyncStatusCodeSynced)).
 		Expect(HealthIs(statusCode)).
 		And(func(app *Application) {
@@ -344,7 +442,9 @@ func TestKsonnetApp(t *testing.T) {
 	Given(t).
 		Path("ksonnet").
 		Env("prod").
+		// Null out dest server to verify that destination is inferred from ksonnet app
 		Parameter("guestbook-ui=image=gcr.io/heptio-images/ks-guestbook-demo:0.1").
+		DestServer("").
 		When().
 		Create().
 		Sync().
@@ -358,7 +458,7 @@ func TestKsonnetApp(t *testing.T) {
 				Path:     app.Spec.Source.Path,
 				Repo:     app.Spec.Source.RepoURL,
 				Revision: app.Spec.Source.TargetRevision,
-				Ksonnet:  &argorepo.KsonnetAppDetailsQuery{Environment: "prod"},
+				Ksonnet:  &apiclient.KsonnetAppDetailsQuery{Environment: "prod"},
 			})
 			assert.NoError(t, err)
 
@@ -429,12 +529,79 @@ func TestSyncResourceByLabel(t *testing.T) {
 		Sync().
 		Then().
 		And(func(app *Application) {
-			res, _ := fixture.RunCli("app", "sync", app.Name, "--label", fmt.Sprintf("app.kubernetes.io/instance=%s", app.Name))
-			assert.Contains(t, res, "guestbook-ui  Synced  Healthy")
-
-			res, _ = fixture.RunCli("app", "sync", app.Name, "--label", "this-label=does-not-exist")
-			assert.Contains(t, res, "level=fatal")
+			_, _ = fixture.RunCli("app", "sync", app.Name, "--label", fmt.Sprintf("app.kubernetes.io/instance=%s", app.Name))
+		}).
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		And(func(app *Application) {
+			_, err := fixture.RunCli("app", "sync", app.Name, "--label", "this-label=does-not-exist")
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "level=fatal")
 		})
+}
+
+func TestLocalManifestSync(t *testing.T) {
+	Given(t).
+		Path(guestbookPath).
+		When().
+		Create().
+		Sync().
+		Then().
+		And(func(app *Application) {
+			res, _ := fixture.RunCli("app", "manifests", app.Name)
+			assert.Contains(t, res, "containerPort: 80")
+			assert.Contains(t, res, "image: gcr.io/heptio-images/ks-guestbook-demo:0.2")
+		}).
+		Given().
+		LocalPath(guestbookPathLocal).
+		When().
+		Sync().
+		Then().
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		And(func(app *Application) {
+			res, _ := fixture.RunCli("app", "manifests", app.Name)
+			assert.Contains(t, res, "containerPort: 81")
+			assert.Contains(t, res, "image: gcr.io/heptio-images/ks-guestbook-demo:0.3")
+		}).
+		Given().
+		LocalPath("").
+		When().
+		Sync().
+		Then().
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		And(func(app *Application) {
+			res, _ := fixture.RunCli("app", "manifests", app.Name)
+			assert.Contains(t, res, "containerPort: 80")
+			assert.Contains(t, res, "image: gcr.io/heptio-images/ks-guestbook-demo:0.2")
+		})
+}
+
+func TestNoLocalSyncWithAutosyncEnabled(t *testing.T) {
+	Given(t).
+		Path(guestbookPath).
+		When().
+		Create().
+		Sync().
+		Then().
+		And(func(app *Application) {
+			_, err := fixture.RunCli("app", "set", app.Name, "--sync-policy", "automated")
+			assert.NoError(t, err)
+
+			_, err = fixture.RunCli("app", "sync", app.Name, "--local", guestbookPathLocal)
+			assert.Error(t, err)
+		})
+}
+
+func TestSyncAsync(t *testing.T) {
+	Given(t).
+		Path(guestbookPath).
+		Async(true).
+		When().
+		Create().
+		Sync().
+		Then().
+		Expect(Success("")).
+		Expect(OperationPhaseIs(OperationSucceeded)).
+		Expect(SyncStatusIs(SyncStatusCodeSynced))
 }
 
 func TestPermissions(t *testing.T) {
@@ -444,14 +611,14 @@ func TestPermissions(t *testing.T) {
 	assert.NoError(t, err)
 
 	// make sure app cannot be created without permissions in project
-	output, err := fixture.RunCli("app", "create", appName, "--repo", fixture.RepoURL(),
+	_, err = fixture.RunCli("app", "create", appName, "--repo", fixture.RepoURL(fixture.RepoURLTypeFile),
 		"--path", guestbookPath, "--project", "test", "--dest-server", common.KubernetesInternalAPIServerAddr, "--dest-namespace", fixture.DeploymentNamespace())
 	assert.Error(t, err)
-	sourceError := fmt.Sprintf("application repo %s is not permitted in project 'test'", fixture.RepoURL())
+	sourceError := fmt.Sprintf("application repo %s is not permitted in project 'test'", fixture.RepoURL(fixture.RepoURLTypeFile))
 	destinationError := fmt.Sprintf("application destination {%s %s} is not permitted in project 'test'", common.KubernetesInternalAPIServerAddr, fixture.DeploymentNamespace())
 
-	assert.Contains(t, output, sourceError)
-	assert.Contains(t, output, destinationError)
+	assert.Contains(t, err.Error(), sourceError)
+	assert.Contains(t, err.Error(), destinationError)
 
 	proj, err := fixture.AppClientset.ArgoprojV1alpha1().AppProjects(fixture.ArgoCDNamespace).Get("test", metav1.GetOptions{})
 	assert.NoError(t, err)
@@ -462,7 +629,7 @@ func TestPermissions(t *testing.T) {
 	assert.NoError(t, err)
 
 	// make sure controller report permissions issues in conditions
-	_, err = fixture.RunCli("app", "create", appName, "--repo", fixture.RepoURL(),
+	_, err = fixture.RunCli("app", "create", appName, "--repo", fixture.RepoURL(fixture.RepoURLTypeFile),
 		"--path", guestbookPath, "--project", "test", "--dest-server", common.KubernetesInternalAPIServerAddr, "--dest-namespace", fixture.DeploymentNamespace())
 	assert.NoError(t, err)
 	defer func() {
@@ -511,11 +678,40 @@ func TestSyncOptionPruneFalse(t *testing.T) {
 		When().
 		DeleteFile("pod-1.yaml").
 		Refresh(RefreshTypeHard).
+		IgnoreErrors().
 		Sync().
 		Then().
 		Expect(OperationPhaseIs(OperationSucceeded)).
 		Expect(SyncStatusIs(SyncStatusCodeOutOfSync)).
 		Expect(ResourceSyncStatusIs("Pod", "pod-1", SyncStatusCodeOutOfSync))
+}
+
+// make sure that if we have an invalid manifest, we can add it if we disable validation, we get a server error rather than a client error
+func TestSyncOptionValidateFalse(t *testing.T) {
+
+	// k3s does not validate at all, so this test does not work
+	if os.Getenv("ARGOCD_E2E_K3S") == "true" {
+		t.SkipNow()
+	}
+
+	Given(t).
+		Path("crd-validation").
+		When().
+		Create().
+		Then().
+		Expect(Success("")).
+		When().
+		IgnoreErrors().
+		Sync().
+		Then().
+		// client error
+		Expect(Error("error validating data", "")).
+		When().
+		PatchFile("deployment.yaml", `[{"op": "add", "path": "/metadata/annotations", "value": {"argocd.argoproj.io/sync-options": "Validate=false"}}]`).
+		Sync().
+		Then().
+		// server error
+		Expect(Error("Error from server", ""))
 }
 
 // make sure that, if we have a resource that needs pruning, but we're ignoring it, the app is in-sync
@@ -543,4 +739,88 @@ func TestCompareOptionIgnoreExtraneous(t *testing.T) {
 		Then().
 		Expect(OperationPhaseIs(OperationSucceeded)).
 		Expect(SyncStatusIs(SyncStatusCodeSynced))
+}
+
+func TestSelfManagedApps(t *testing.T) {
+
+	Given(t).
+		Path("self-managed-app").
+		When().
+		PatchFile("resources.yaml", fmt.Sprintf(`[{"op": "replace", "path": "/spec/source/repoURL", "value": "%s"}]`, fixture.RepoURL(fixture.RepoURLTypeFile))).
+		Create().
+		Sync().
+		Then().
+		Expect(OperationPhaseIs(OperationSucceeded)).
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		And(func(a *Application) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+			defer cancel()
+
+			reconciledCount := 0
+			var lastReconciledAt *metav1.Time
+			for event := range fixture.ArgoCDClientset.WatchApplicationWithRetry(ctx, a.Name) {
+				reconciledAt := event.Application.Status.ReconciledAt
+				if reconciledAt == nil {
+					reconciledAt = &metav1.Time{}
+				}
+				if lastReconciledAt != nil && !lastReconciledAt.Equal(reconciledAt) {
+					reconciledCount = reconciledCount + 1
+				}
+				lastReconciledAt = reconciledAt
+			}
+
+			assert.True(t, reconciledCount < 3, "Application was reconciled too many times")
+		})
+}
+
+func TestExcludedResource(t *testing.T) {
+	Given(t).
+		ResourceOverrides(map[string]ResourceOverride{"apps/Deployment": {Actions: actionsConfig}}).
+		Path(guestbookPath).
+		ResourceFilter(settings.ResourcesFilter{
+			ResourceExclusions: []settings.FilteredResource{{Kinds: []string{kube.DeploymentKind}}},
+		}).
+		When().
+		Create().
+		Sync().
+		Then().
+		Expect(Condition(ApplicationConditionExcludedResourceWarning, "Resource apps/Deployment guestbook-ui is excluded in the settings"))
+}
+
+func TestOrphanedResource(t *testing.T) {
+	Given(t).
+		ProjectSpec(AppProjectSpec{
+			SourceRepos:       []string{"*"},
+			Destinations:      []ApplicationDestination{{Namespace: "*", Server: "*"}},
+			OrphanedResources: &OrphanedResourcesMonitorSettings{Warn: pointer.BoolPtr(true)},
+		}).
+		Path(guestbookPath).
+		When().
+		Create().
+		Sync().
+		Then().
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		Expect(NoConditions()).
+		When().
+		And(func() {
+			errors.FailOnErr(fixture.KubeClientset.CoreV1().ConfigMaps(fixture.DeploymentNamespace()).Create(&v1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "orphaned-configmap",
+				},
+			}))
+		}).
+		Refresh(RefreshTypeNormal).
+		Then().
+		Expect(Condition(ApplicationConditionOrphanedResourceWarning, "Application has 1 orphaned resources")).
+		Given().
+		ProjectSpec(AppProjectSpec{
+			SourceRepos:       []string{"*"},
+			Destinations:      []ApplicationDestination{{Namespace: "*", Server: "*"}},
+			OrphanedResources: nil,
+		}).
+		When().
+		Refresh(RefreshTypeNormal).
+		Then().
+		Expect(SyncStatusIs(SyncStatusCodeSynced)).
+		Expect(NoConditions())
 }

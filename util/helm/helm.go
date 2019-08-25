@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
+	argoexec "github.com/argoproj/pkg/exec"
 	"github.com/ghodss/yaml"
 	log "github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -72,8 +74,25 @@ func (h *helm) Template(appName string, namespace string, opts *argoappv1.Applic
 		for _, valuesFile := range opts.ValueFiles {
 			args = append(args, "-f", valuesFile)
 		}
+		if opts.Values != "" {
+			file, err := ioutil.TempFile("", "values-*.yaml")
+			if err != nil {
+				return nil, err
+			}
+			p := file.Name()
+			defer func() { _ = os.RemoveAll(p) }()
+			err = ioutil.WriteFile(p, []byte(opts.Values), 0644)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, "-f", p)
+		}
 		for _, p := range opts.Parameters {
-			args = append(args, "--set", fmt.Sprintf("%s=%s", p.Name, p.Value))
+			if p.ForceString {
+				args = append(args, "--set-string", fmt.Sprintf("%s=%s", p.Name, p.Value))
+			} else {
+				args = append(args, "--set", fmt.Sprintf("%s=%s", p.Name, p.Value))
+			}
 		}
 	}
 
@@ -210,33 +229,22 @@ func (h *helm) GetParameters(valuesFiles []string) ([]*argoappv1.HelmParameter, 
 }
 
 func (h *helm) helmCmd(args ...string) (string, error) {
-	return h.helmCmdExt(args, func(s string) string {
-		return s
-	})
+	return h.helmCmdExt(args, argoexec.Unredacted)
 }
 
-func (h *helm) helmCmdExt(args []string, logFormat func(string) string) (string, error) {
+func (h *helm) helmCmdExt(args []string, redactor func(string) string) (string, error) {
+	cleanHelmParameters(args)
 	cmd := exec.Command("helm", args...)
 	cmd.Env = os.Environ()
 	cmd.Dir = h.path
 	if h.home != "" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("HELM_HOME=%s", h.home))
 	}
-	cmdStr := logFormat(strings.Join(cmd.Args, " "))
-	log.Info(cmdStr)
-	outBytes, err := cmd.Output()
-	if err != nil {
-		exErr, ok := err.(*exec.ExitError)
-		if !ok {
-			return "", err
-		}
-		errOutput := string(exErr.Stderr)
-		log.Errorf("`%s` failed: %s", cmdStr, errOutput)
-		return "", fmt.Errorf(strings.TrimSpace(errOutput))
-	}
-	out := string(outBytes)
-	log.Debug(out)
-	return out, nil
+
+	return argoexec.RunCommandExt(cmd, argoexec.CmdOpts{
+		Timeout:  config.CmdOpts().Timeout,
+		Redactor: redactor,
+	})
 }
 
 func flatVals(input map[string]interface{}, output map[string]string, prefixes ...string) {
@@ -246,5 +254,12 @@ func flatVals(input map[string]interface{}, output map[string]string, prefixes .
 		} else {
 			output[strings.Join(append(prefixes, fmt.Sprintf("%v", key)), ".")] = fmt.Sprintf("%v", val)
 		}
+	}
+}
+
+func cleanHelmParameters(params []string) {
+	re := regexp.MustCompile(`([^\\]),`)
+	for i, param := range params {
+		params[i] = re.ReplaceAllString(param, `$1\,`)
 	}
 }

@@ -11,14 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/argoproj/pkg/errors"
 	jsonpatch "github.com/evanphx/json-patch"
 	"github.com/ghodss/yaml"
 	log "github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/argoproj/argo-cd/common"
 	. "github.com/argoproj/argo-cd/errors"
 	argocdclient "github.com/argoproj/argo-cd/pkg/apiclient"
 	sessionpkg "github.com/argoproj/argo-cd/pkg/apiclient/session"
@@ -31,13 +34,16 @@ import (
 )
 
 const (
-	defaultAriServer = "localhost:8080"
+	defaultApiServer = "localhost:8080"
 	adminPassword    = "password"
 	testingLabel     = "e2e.argoproj.io"
 	ArgoCDNamespace  = "argocd-e2e"
 
 	// ensure all repos are in one directory tree, so we can easily clean them up
-	tmpDir = "/tmp/argo-e2e"
+	TmpDir  = "/tmp/argo-e2e"
+	repoDir = "testdata.git"
+
+	GuestbookPath = "guestbook"
 )
 
 var (
@@ -50,7 +56,17 @@ var (
 	apiServerAddress string
 	token            string
 	plainText        bool
-	repoUrl          string
+)
+
+type RepoURLType string
+
+const (
+	RepoURLTypeFile            = "file"
+	RepoURLTypeHTTPS           = "https"
+	RepoURLTypeHTTPSClientCert = "https-cc"
+	RepoURLTypeSSH             = "ssh"
+	GitUsername                = "admin"
+	GitPassword                = "password"
 )
 
 // getKubeConfig creates new kubernetes client config using specified config path and config overrides variables
@@ -67,14 +83,17 @@ func getKubeConfig(configPath string, overrides clientcmd.ConfigOverrides) *rest
 // creates e2e tests fixture: ensures that Application CRD is installed, creates temporal namespace, starts repo and api server,
 // configure currently available cluster.
 func init() {
+	// ensure we log all shell execs
+	log.SetLevel(log.DebugLevel)
 	// set-up variables
 	config := getKubeConfig("", clientcmd.ConfigOverrides{})
 	AppClientset = appclientset.NewForConfigOrDie(config)
 	KubeClientset = kubernetes.NewForConfigOrDie(config)
 	apiServerAddress = os.Getenv(argocdclient.EnvArgoCDServer)
 	if apiServerAddress == "" {
-		apiServerAddress = defaultAriServer
+		apiServerAddress = defaultApiServer
 	}
+
 	tlsTestResult, err := grpcutil.TestTLS(apiServerAddress)
 	CheckError(err)
 
@@ -108,14 +127,24 @@ func Name() string {
 }
 
 func repoDirectory() string {
-	return path.Join(tmpDir, name)
-}
-func SetRepoURL(url string) {
-	repoUrl = url
+	return path.Join(TmpDir, repoDir)
 }
 
-func RepoURL() string {
-	return repoUrl
+func RepoURL(urlType RepoURLType) string {
+	switch urlType {
+	// Git server via SSH
+	case RepoURLTypeSSH:
+		return "ssh://root@localhost:2222/tmp/argo-e2e/testdata.git"
+	// Git server via HTTPS
+	case RepoURLTypeHTTPS:
+		return "https://localhost:9443/argo-e2e/testdata.git"
+	// Git server via HTTPS - Client Cert protected
+	case RepoURLTypeHTTPSClientCert:
+		return "https://localhost:9444/argo-e2e/testdata.git"
+	// Default - file based Git repository
+	default:
+		return fmt.Sprintf("file://%s", repoDirectory())
+	}
 }
 
 func DeploymentNamespace() string {
@@ -140,16 +169,134 @@ func Settings(consumer func(s *settings.ArgoCDSettings)) {
 	CheckError(settingsManager.SaveSettings(s))
 }
 
+func updateSettingConfigMap(updater func(cm *corev1.ConfigMap) error) {
+	cm, err := KubeClientset.CoreV1().ConfigMaps(ArgoCDNamespace).Get(common.ArgoCDConfigMapName, v1.GetOptions{})
+	errors.CheckError(err)
+	if cm.Data == nil {
+		cm.Data = make(map[string]string)
+	}
+	errors.CheckError(updater(cm))
+	_, err = KubeClientset.CoreV1().ConfigMaps(ArgoCDNamespace).Update(cm)
+	errors.CheckError(err)
+}
+
+func updateTLSCertsConfigMap(updater func(cm *corev1.ConfigMap) error) {
+	cm, err := KubeClientset.CoreV1().ConfigMaps(ArgoCDNamespace).Get(common.ArgoCDTLSCertsConfigMapName, v1.GetOptions{})
+	errors.CheckError(err)
+	if cm.Data == nil {
+		cm.Data = make(map[string]string)
+	}
+	errors.CheckError(updater(cm))
+	_, err = KubeClientset.CoreV1().ConfigMaps(ArgoCDNamespace).Update(cm)
+	errors.CheckError(err)
+}
+
+func updateSSHKnownHostsConfigMap(updater func(cm *corev1.ConfigMap) error) {
+	cm, err := KubeClientset.CoreV1().ConfigMaps(ArgoCDNamespace).Get(common.ArgoCDKnownHostsConfigMapName, v1.GetOptions{})
+	errors.CheckError(err)
+	if cm.Data == nil {
+		cm.Data = make(map[string]string)
+	}
+	errors.CheckError(updater(cm))
+	_, err = KubeClientset.CoreV1().ConfigMaps(ArgoCDNamespace).Update(cm)
+	errors.CheckError(err)
+}
+
 func SetResourceOverrides(overrides map[string]v1alpha1.ResourceOverride) {
-	Settings(func(s *settings.ArgoCDSettings) {
-		s.ResourceOverrides = overrides
+	updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
+		if len(overrides) > 0 {
+			yamlBytes, err := yaml.Marshal(overrides)
+			if err != nil {
+				return err
+			}
+			cm.Data["resource.customizations"] = string(yamlBytes)
+		} else {
+			delete(cm.Data, "resource.customizations")
+		}
+		return nil
 	})
 }
 
-func SetConfigManagementPlugin(plugin v1alpha1.ConfigManagementPlugin) {
-	Settings(func(s *settings.ArgoCDSettings) {
-		s.ConfigManagementPlugins = []v1alpha1.ConfigManagementPlugin{plugin}
+func SetConfigManagementPlugins(plugin ...v1alpha1.ConfigManagementPlugin) {
+	updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
+		yamlBytes, err := yaml.Marshal(plugin)
+		if err != nil {
+			return err
+		}
+		cm.Data["configManagementPlugins"] = string(yamlBytes)
+		return nil
 	})
+}
+
+func SetResourceFilter(filters settings.ResourcesFilter) {
+	updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
+		exclusions, err := yaml.Marshal(filters.ResourceExclusions)
+		if err != nil {
+			return err
+		}
+		inclusions, err := yaml.Marshal(filters.ResourceInclusions)
+		if err != nil {
+			return err
+		}
+		cm.Data["resource.exclusions"] = string(exclusions)
+		cm.Data["resource.inclusions"] = string(inclusions)
+		return nil
+	})
+}
+
+func SetRepos(repos ...settings.RepoCredentials) {
+	updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
+		yamlBytes, err := yaml.Marshal(repos)
+		if err != nil {
+			return err
+		}
+		cm.Data["repositories"] = string(yamlBytes)
+		return nil
+	})
+}
+
+func SetRepoCredentials(repos ...settings.RepoCredentials) {
+	updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
+		yamlBytes, err := yaml.Marshal(repos)
+		if err != nil {
+			return err
+		}
+		cm.Data["repository.credentials"] = string(yamlBytes)
+		return nil
+	})
+}
+
+func SetTLSCerts() {
+	updateTLSCertsConfigMap(func(cm *corev1.ConfigMap) error {
+		cm.Data = map[string]string{}
+		return nil
+	})
+}
+
+func SetSSHKnownHosts() {
+	updateSSHKnownHostsConfigMap(func(cm *corev1.ConfigMap) error {
+		cm.Data = map[string]string{}
+		return nil
+	})
+}
+
+func SetHelmRepoCredential(creds settings.HelmRepoCredentials) {
+	updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
+		yamlBytes, err := yaml.Marshal(creds)
+		if err != nil {
+			return err
+		}
+		cm.Data["helm.repositories"] = string(yamlBytes)
+		return nil
+	})
+}
+
+func SetProjectSpec(project string, spec v1alpha1.AppProjectSpec) {
+	proj, err := AppClientset.ArgoprojV1alpha1().AppProjects(ArgoCDNamespace).Get(project, v1.GetOptions{})
+	errors.CheckError(err)
+	proj.Spec = spec
+	_, err = AppClientset.ArgoprojV1alpha1().AppProjects(ArgoCDNamespace).Update(proj)
+	errors.CheckError(err)
 }
 
 func EnsureCleanState(t *testing.T) {
@@ -174,30 +321,48 @@ func EnsureCleanState(t *testing.T) {
 	CheckError(err)
 	CheckError(settingsManager.SaveSettings(&settings.ArgoCDSettings{
 		// changing theses causes a restart
-		AdminPasswordHash:    s.AdminPasswordHash,
-		AdminPasswordMtime:   s.AdminPasswordMtime,
-		ServerSignature:      s.ServerSignature,
-		Certificate:          s.Certificate,
-		DexConfig:            s.DexConfig,
-		OIDCConfigRAW:        s.OIDCConfigRAW,
-		URL:                  s.URL,
-		WebhookGitHubSecret:  s.WebhookGitHubSecret,
-		WebhookGitLabSecret:  s.WebhookGitLabSecret,
-		WebhookBitbucketUUID: s.WebhookBitbucketUUID,
-		Secrets:              s.Secrets,
+		AdminPasswordHash:            s.AdminPasswordHash,
+		AdminPasswordMtime:           s.AdminPasswordMtime,
+		ServerSignature:              s.ServerSignature,
+		Certificate:                  s.Certificate,
+		DexConfig:                    s.DexConfig,
+		OIDCConfigRAW:                s.OIDCConfigRAW,
+		URL:                          s.URL,
+		WebhookGitHubSecret:          s.WebhookGitHubSecret,
+		WebhookGitLabSecret:          s.WebhookGitLabSecret,
+		WebhookBitbucketUUID:         s.WebhookBitbucketUUID,
+		WebhookBitbucketServerSecret: s.WebhookBitbucketServerSecret,
+		WebhookGogsSecret:            s.WebhookGogsSecret,
+		KustomizeBuildOptions:        s.KustomizeBuildOptions,
+		Secrets:                      s.Secrets,
 	}))
+	SetResourceOverrides(make(map[string]v1alpha1.ResourceOverride))
+	SetConfigManagementPlugins()
+	SetRepoCredentials()
+	SetRepos()
+	SetResourceFilter(settings.ResourcesFilter{})
+	SetProjectSpec("default", v1alpha1.AppProjectSpec{
+		OrphanedResources:        nil,
+		SourceRepos:              []string{"*"},
+		Destinations:             []v1alpha1.ApplicationDestination{{Namespace: "*", Server: "*"}},
+		ClusterResourceWhitelist: []v1.GroupKind{{Group: "*", Kind: "*"}},
+	})
+	SetTLSCerts()
 
 	// remove tmp dir
-	CheckError(os.RemoveAll(tmpDir))
+	CheckError(os.RemoveAll(TmpDir))
 
 	// name based on test name
 	name = dnsFriendly(t.Name())
 	// random id - unique across test runs
 	id = name + "-" + strings.ToLower(rand.RandString(5))
-	repoUrl = fmt.Sprintf("file://%s", repoDirectory())
 
 	// create tmp dir
-	FailOnErr(Run("", "mkdir", "-p", tmpDir))
+	FailOnErr(Run("", "mkdir", "-p", TmpDir))
+
+	// create TLS and SSH certificate directories
+	FailOnErr(Run("", "mkdir", "-p", TmpDir+"/app/config/tls"))
+	FailOnErr(Run("", "mkdir", "-p", TmpDir+"/app/config/ssh"))
 
 	// set-up tmp repo, must have unique name
 	FailOnErr(Run("", "cp", "-Rf", "testdata", repoDirectory()))
@@ -224,8 +389,6 @@ func RunCli(args ...string) (string, error) {
 }
 
 func Patch(path string, jsonPatch string) {
-
-	checkLocalRepo()
 
 	log.WithFields(log.Fields{"path": path, "jsonPatch": jsonPatch}).Info("patching")
 
@@ -261,8 +424,6 @@ func Patch(path string, jsonPatch string) {
 
 func Delete(path string) {
 
-	checkLocalRepo()
-
 	log.WithFields(log.Fields{"path": path}).Info("deleting")
 
 	CheckError(os.Remove(filepath.Join(repoDirectory(), path)))
@@ -271,8 +432,27 @@ func Delete(path string) {
 	FailOnErr(Run(repoDirectory(), "git", "commit", "-am", "delete"))
 }
 
-func checkLocalRepo() {
-	if !strings.HasPrefix(repoUrl, "file://") {
-		log.WithFields(log.Fields{"repoUrl": repoUrl}).Fatal("cannot patch repo unless it is local")
-	}
+func AddFile(path, contents string) {
+
+	log.WithFields(log.Fields{"path": path}).Info("adding")
+
+	CheckError(ioutil.WriteFile(filepath.Join(repoDirectory(), path), []byte(contents), 0644))
+
+	FailOnErr(Run(repoDirectory(), "git", "diff"))
+	FailOnErr(Run(repoDirectory(), "git", "add", "."))
+	FailOnErr(Run(repoDirectory(), "git", "commit", "-am", "add file"))
+}
+
+// create the resource by creating using "kubectl apply", with bonus templating
+func Declarative(filename string, values interface{}) (string, error) {
+
+	bytes, err := ioutil.ReadFile(path.Join("testdata", filename))
+	CheckError(err)
+
+	tmpFile, err := ioutil.TempFile("", "")
+	CheckError(err)
+	_, err = tmpFile.WriteString(Tmpl(string(bytes), values))
+	CheckError(err)
+
+	return Run("", "kubectl", "-n", ArgoCDNamespace, "apply", "-f", tmpFile.Name())
 }

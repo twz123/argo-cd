@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"reflect"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -19,19 +20,27 @@ import (
 	"github.com/argoproj/argo-cd/util/settings"
 )
 
+type cacheSettings struct {
+	ResourceOverrides   map[string]appv1.ResourceOverride
+	AppInstanceLabelKey string
+	ResourcesFilter     *settings.ResourcesFilter
+}
+
 type LiveStateCache interface {
-	IsNamespaced(server string, obj *unstructured.Unstructured) (bool, error)
+	IsNamespaced(server string, gk schema.GroupKind) (bool, error)
 	// Executes give callback against resource specified by the key and all its children
-	IterateHierarchy(server string, obj *unstructured.Unstructured, action func(child appv1.ResourceNode)) error
+	IterateHierarchy(server string, key kube.ResourceKey, action func(child appv1.ResourceNode, appName string)) error
 	// Returns state of live nodes which correspond for target nodes of specified application.
 	GetManagedLiveObjs(a *appv1.Application, targetObjs []*unstructured.Unstructured) (map[kube.ResourceKey]*unstructured.Unstructured, error)
+	// Returns all top level resources (resources without owner references) of a specified namespace
+	GetNamespaceTopLevelResources(server string, namespace string) (map[kube.ResourceKey]appv1.ResourceNode, error)
 	// Starts watching resources of each controlled cluster.
-	Run(ctx context.Context)
+	Run(ctx context.Context) error
 	// Invalidate invalidates the entire cluster state cache
 	Invalidate()
 }
 
-type AppUpdatedHandler = func(appName string, fullRefresh bool, ref v1.ObjectReference)
+type ObjectUpdatedHandler = func(managedByApp map[string]bool, ref v1.ObjectReference)
 
 func GetTargetObjKey(a *appv1.Application, un *unstructured.Unstructured, isNamespaced bool) kube.ResourceKey {
 	key := kube.GetResourceKey(un)
@@ -47,32 +56,51 @@ func GetTargetObjKey(a *appv1.Application, un *unstructured.Unstructured, isName
 func NewLiveStateCache(
 	db db.ArgoDB,
 	appInformer cache.SharedIndexInformer,
-	settings *settings.ArgoCDSettings,
+	settingsMgr *settings.SettingsManager,
 	kubectl kube.Kubectl,
 	metricsServer *metrics.MetricsServer,
-	onAppUpdated AppUpdatedHandler) LiveStateCache {
+	onObjectUpdated ObjectUpdatedHandler) LiveStateCache {
 
 	return &liveStateCache{
-		appInformer:   appInformer,
-		db:            db,
-		clusters:      make(map[string]*clusterInfo),
-		lock:          &sync.Mutex{},
-		onAppUpdated:  onAppUpdated,
-		kubectl:       kubectl,
-		settings:      settings,
-		metricsServer: metricsServer,
+		appInformer:       appInformer,
+		db:                db,
+		clusters:          make(map[string]*clusterInfo),
+		lock:              &sync.Mutex{},
+		onObjectUpdated:   onObjectUpdated,
+		kubectl:           kubectl,
+		settingsMgr:       settingsMgr,
+		metricsServer:     metricsServer,
+		cacheSettingsLock: &sync.Mutex{},
 	}
 }
 
 type liveStateCache struct {
-	db            db.ArgoDB
-	clusters      map[string]*clusterInfo
-	lock          *sync.Mutex
-	appInformer   cache.SharedIndexInformer
-	onAppUpdated  AppUpdatedHandler
-	kubectl       kube.Kubectl
-	settings      *settings.ArgoCDSettings
-	metricsServer *metrics.MetricsServer
+	db                db.ArgoDB
+	clusters          map[string]*clusterInfo
+	lock              *sync.Mutex
+	appInformer       cache.SharedIndexInformer
+	onObjectUpdated   ObjectUpdatedHandler
+	kubectl           kube.Kubectl
+	settingsMgr       *settings.SettingsManager
+	metricsServer     *metrics.MetricsServer
+	cacheSettingsLock *sync.Mutex
+	cacheSettings     *cacheSettings
+}
+
+func (c *liveStateCache) loadCacheSettings() (*cacheSettings, error) {
+	appInstanceLabelKey, err := c.settingsMgr.GetAppInstanceLabelKey()
+	if err != nil {
+		return nil, err
+	}
+	resourcesFilter, err := c.settingsMgr.GetResourcesFilter()
+	if err != nil {
+		return nil, err
+	}
+	resourceOverrides, err := c.settingsMgr.GetResourceOverrides()
+	if err != nil {
+		return nil, err
+	}
+	return &cacheSettings{AppInstanceLabelKey: appInstanceLabelKey, ResourceOverrides: resourceOverrides, ResourcesFilter: resourcesFilter}, nil
 }
 
 func (c *liveStateCache) getCluster(server string) (*clusterInfo, error) {
@@ -85,17 +113,17 @@ func (c *liveStateCache) getCluster(server string) (*clusterInfo, error) {
 			return nil, err
 		}
 		info = &clusterInfo{
-			apisMeta:     make(map[schema.GroupKind]*apiMeta),
-			lock:         &sync.Mutex{},
-			nodes:        make(map[kube.ResourceKey]*node),
-			nsIndex:      make(map[string]map[kube.ResourceKey]*node),
-			onAppUpdated: c.onAppUpdated,
-			kubectl:      c.kubectl,
-			cluster:      cluster,
-			syncTime:     nil,
-			syncLock:     &sync.Mutex{},
-			log:          log.WithField("server", cluster.Server),
-			settings:     c.settings,
+			apisMeta:         make(map[schema.GroupKind]*apiMeta),
+			lock:             &sync.Mutex{},
+			nodes:            make(map[kube.ResourceKey]*node),
+			nsIndex:          make(map[string]map[kube.ResourceKey]*node),
+			onObjectUpdated:  c.onObjectUpdated,
+			kubectl:          c.kubectl,
+			cluster:          cluster,
+			syncTime:         nil,
+			syncLock:         &sync.Mutex{},
+			log:              log.WithField("server", cluster.Server),
+			cacheSettingsSrc: c.getCacheSettings,
 		}
 
 		c.clusters[cluster.Server] = info
@@ -127,21 +155,29 @@ func (c *liveStateCache) Invalidate() {
 	log.Info("live state cache invalidated")
 }
 
-func (c *liveStateCache) IsNamespaced(server string, obj *unstructured.Unstructured) (bool, error) {
+func (c *liveStateCache) IsNamespaced(server string, gk schema.GroupKind) (bool, error) {
 	clusterInfo, err := c.getSyncedCluster(server)
 	if err != nil {
 		return false, err
 	}
-	return clusterInfo.isNamespaced(obj), nil
+	return clusterInfo.isNamespaced(gk), nil
 }
 
-func (c *liveStateCache) IterateHierarchy(server string, obj *unstructured.Unstructured, action func(child appv1.ResourceNode)) error {
+func (c *liveStateCache) IterateHierarchy(server string, key kube.ResourceKey, action func(child appv1.ResourceNode, appName string)) error {
 	clusterInfo, err := c.getSyncedCluster(server)
 	if err != nil {
 		return err
 	}
-	clusterInfo.iterateHierarchy(obj, action)
+	clusterInfo.iterateHierarchy(key, action)
 	return nil
+}
+
+func (c *liveStateCache) GetNamespaceTopLevelResources(server string, namespace string) (map[kube.ResourceKey]appv1.ResourceNode, error) {
+	clusterInfo, err := c.getSyncedCluster(server)
+	if err != nil {
+		return nil, err
+	}
+	return clusterInfo.getNamespaceTopLevelResources(namespace), nil
 }
 
 func (c *liveStateCache) GetManagedLiveObjs(a *appv1.Application, targetObjs []*unstructured.Unstructured) (map[kube.ResourceKey]*unstructured.Unstructured, error) {
@@ -161,8 +197,55 @@ func isClusterHasApps(apps []interface{}, cluster *appv1.Cluster) bool {
 	return false
 }
 
+func (c *liveStateCache) getCacheSettings() *cacheSettings {
+	c.cacheSettingsLock.Lock()
+	defer c.cacheSettingsLock.Unlock()
+	return c.cacheSettings
+}
+
+func (c *liveStateCache) watchSettings(ctx context.Context) {
+	updateCh := make(chan *settings.ArgoCDSettings, 1)
+	c.settingsMgr.Subscribe(updateCh)
+
+	done := false
+	for !done {
+		select {
+		case <-updateCh:
+			nextCacheSettings, err := c.loadCacheSettings()
+			if err != nil {
+				log.Warnf("Failed to read updated settings: %v", err)
+				continue
+			}
+
+			c.cacheSettingsLock.Lock()
+			needInvalidate := false
+			if !reflect.DeepEqual(c.cacheSettings, nextCacheSettings) {
+				c.cacheSettings = nextCacheSettings
+				needInvalidate = true
+			}
+			c.cacheSettingsLock.Unlock()
+			if needInvalidate {
+				c.Invalidate()
+			}
+		case <-ctx.Done():
+			done = true
+		}
+	}
+	log.Info("shutting down settings watch")
+	c.settingsMgr.Unsubscribe(updateCh)
+	close(updateCh)
+}
+
 // Run watches for resource changes annotated with application label on all registered clusters and schedule corresponding app refresh.
-func (c *liveStateCache) Run(ctx context.Context) {
+func (c *liveStateCache) Run(ctx context.Context) error {
+	cacheSettings, err := c.loadCacheSettings()
+	if err != nil {
+		return err
+	}
+	c.cacheSettings = cacheSettings
+
+	go c.watchSettings(ctx)
+
 	util.RetryUntilSucceed(func() error {
 		clusterEventCallback := func(event *db.ClusterEvent) {
 			c.lock.Lock()
@@ -188,4 +271,5 @@ func (c *liveStateCache) Run(ctx context.Context) {
 	}, "watch clusters", ctx, clusterRetryTimeout)
 
 	<-ctx.Done()
+	return nil
 }

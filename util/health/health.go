@@ -10,6 +10,8 @@ import (
 	coreV1 "k8s.io/api/core/v1"
 	extv1beta1 "k8s.io/api/extensions/v1beta1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
+	apiregistrationv1beta1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1beta1"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/apis/apps"
 	"k8s.io/kubernetes/pkg/kubectl/scheme"
@@ -18,7 +20,7 @@ import (
 	hookutil "github.com/argoproj/argo-cd/util/hook"
 	"github.com/argoproj/argo-cd/util/kube"
 	"github.com/argoproj/argo-cd/util/lua"
-	"github.com/argoproj/argo-cd/util/resource"
+	"github.com/argoproj/argo-cd/util/resource/ignore"
 )
 
 // SetApplicationHealth updates the health statuses of all resources performed in the comparison
@@ -40,14 +42,35 @@ func SetApplicationHealth(resStatuses []appv1.ResourceStatus, liveObjs []*unstru
 		}
 		if resHealth != nil {
 			resStatuses[i].Health = resHealth
-			// Don't allow resource hooks to affect health status
-			ignore := liveObj != nil && (hookutil.IsHook(liveObj) || resource.Ignore(liveObj))
+			ignore := ignoreLiveObjectHealth(liveObj, *resHealth)
 			if !ignore && IsWorse(appHealth.Status, resHealth.Status) {
 				appHealth.Status = resHealth.Status
 			}
 		}
 	}
 	return &appHealth, savedErr
+}
+
+// ignoreLiveObjectHealth determines if we should not allow the live object to affect the overall
+// health of the application (e.g. hooks, missing child applications)
+func ignoreLiveObjectHealth(liveObj *unstructured.Unstructured, resHealth appv1.HealthStatus) bool {
+	if liveObj != nil {
+		if hookutil.IsHook(liveObj) {
+			// Don't allow resource hooks to affect health status
+			return true
+		}
+		if ignore.Ignore(liveObj) {
+			return true
+		}
+		gvk := liveObj.GroupVersionKind()
+		if gvk.Group == "argoproj.io" && gvk.Kind == "Application" && resHealth.Status == appv1.HealthStatusMissing {
+			// Covers the app-of-apps corner case where child app is deployed but that app itself
+			// has a status of 'Missing', which we don't want to cause the parent's health status
+			// to also be Missing
+			return true
+		}
+	}
+	return false
 }
 
 // GetResourceHealth returns the health of a k8s resource
@@ -91,6 +114,11 @@ func GetResourceHealth(obj *unstructured.Unstructured, resourceOverrides map[str
 		switch gvk.Kind {
 		case "Application":
 			health, err = getApplicationHealth(obj)
+		}
+	case "apiregistration.k8s.io":
+		switch gvk.Kind {
+		case kube.APIServiceKind:
+			health, err = getAPIServiceHealth(obj)
 		}
 	case "":
 		switch gvk.Kind {
@@ -259,8 +287,10 @@ func getDeploymentHealth(obj *unstructured.Unstructured) (*appv1.HealthStatus, e
 
 func init() {
 	_ = appv1.SchemeBuilder.AddToScheme(scheme.Scheme)
-
+	_ = apiregistrationv1.SchemeBuilder.AddToScheme(scheme.Scheme)
+	_ = apiregistrationv1beta1.SchemeBuilder.AddToScheme(scheme.Scheme)
 }
+
 func getApplicationHealth(obj *unstructured.Unstructured) (*appv1.HealthStatus, error) {
 	application := &appv1.Application{}
 	err := scheme.Scheme.Convert(obj, application, nil)
@@ -526,5 +556,34 @@ func getPodHealth(obj *unstructured.Unstructured) (*appv1.HealthStatus, error) {
 	return &appv1.HealthStatus{
 		Status:  appv1.HealthStatusUnknown,
 		Message: pod.Status.Message,
+	}, nil
+}
+
+func getAPIServiceHealth(obj *unstructured.Unstructured) (*appv1.HealthStatus, error) {
+	apiservice := &apiregistrationv1.APIService{}
+	err := scheme.Scheme.Convert(obj, apiservice, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert %T to %T: %v", obj, apiservice, err)
+	}
+
+	for _, c := range apiservice.Status.Conditions {
+		switch c.Type {
+		case apiregistrationv1.Available:
+			if c.Status == apiregistrationv1.ConditionTrue {
+				return &appv1.HealthStatus{
+					Status:  appv1.HealthStatusHealthy,
+					Message: fmt.Sprintf("%s: %s", c.Reason, c.Message),
+				}, nil
+			} else {
+				return &appv1.HealthStatus{
+					Status:  appv1.HealthStatusProgressing,
+					Message: fmt.Sprintf("%s: %s", c.Reason, c.Message),
+				}, nil
+			}
+		}
+	}
+	return &appv1.HealthStatus{
+		Status:  appv1.HealthStatusProgressing,
+		Message: "Waiting to be processed",
 	}, nil
 }

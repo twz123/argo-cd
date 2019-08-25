@@ -1,4 +1,5 @@
 import { Tooltip } from 'argo-ui';
+import * as classNames from 'classnames';
 import * as React from 'react';
 
 import { Consumer } from '../../../shared/context';
@@ -7,16 +8,19 @@ import * as models from '../../../shared/models';
 import { ApplicationURLs } from '../application-urls';
 import * as AppUtils from '../utils';
 
+require('./applications-tiles.scss');
+
 export interface ApplicationTilesProps {
     applications: models.Application[];
     syncApplication: (appName: string) => any;
+    refreshApplication: (appName: string) => any;
     deleteApplication: (appName: string) => any;
 }
 
-export const ApplicationTiles = ({applications, syncApplication, deleteApplication}: ApplicationTilesProps) => (
+export const ApplicationTiles = ({applications, syncApplication, refreshApplication, deleteApplication}: ApplicationTilesProps) => (
     <Consumer>
     {(ctx) => (
-    <div className='argo-table-list argo-table-list--clickable row small-up-1 medium-up-2 large-up-4'>
+    <div className='applications-tiles argo-table-list argo-table-list--clickable row small-up-1 medium-up-2 large-up-3 xxxlarge-up-4'>
         {applications.map((app) => (
             <div key={app.metadata.name} className='column column-block'>
                 <div className={`argo-table-list__row
@@ -46,12 +50,12 @@ export const ApplicationTiles = ({applications, syncApplication, deleteApplicati
                             <div className='row'>
                                 <div className='columns small-3'>Repository:</div>
                                 <div className='columns small-9'>
-                                    <Tooltip content={app.spec.source.repoURL}>
-                                        <a href={app.spec.source.repoURL} target='_blank' onClick={(event) => event.stopPropagation()}>
-                                            <i className='fa fa-external-link'/> {app.spec.source.repoURL}
-                                        </a>
-                                    </Tooltip>
+                                    <Tooltip content={app.spec.source.repoURL}><span>{app.spec.source.repoURL}</span></Tooltip>
                                 </div>
+                            </div>
+                            <div className='row'>
+                                <div className='columns small-3'>Target Revision:</div>
+                                <div className='columns small-9'>{app.spec.source.targetRevision || 'HEAD'}</div>
                             </div>
                             <div className='row'>
                                 <div className='columns small-3'>Path:</div>
@@ -59,10 +63,12 @@ export const ApplicationTiles = ({applications, syncApplication, deleteApplicati
                             </div>
                             <div className='row'>
                                 <div className='columns small-3'>Destination:</div>
+                                <div className='columns small-9'>{app.spec.destination.server}</div>
+                            </div>
+                            <div className='row'>
+                                <div className='columns small-3'>Namespace:</div>
                                 <div className='columns small-9'>
-                                    <Tooltip content={app.spec.destination.server + '/' + app.spec.destination.namespace}>
-                                        <span>{app.spec.destination.server}/{app.spec.destination.namespace}</span>
-                                    </Tooltip>
+                                    {app.spec.destination.namespace}
                                 </div>
                             </div>
                             <div className='row'>
@@ -72,6 +78,13 @@ export const ApplicationTiles = ({applications, syncApplication, deleteApplicati
                                             e.stopPropagation();
                                             syncApplication(app.metadata.name);
                                         }}><i className='fa fa-sync'/> Sync</a>
+                                    &nbsp;
+                                    <a className='argo-button argo-button--base' {...AppUtils.refreshLinkAttrs(app)}
+                                       onClick={(e) => {
+                                           e.stopPropagation();
+                                           refreshApplication(app.metadata.name);
+                                       }}><i className={classNames('fa fa-redo', { 'status-icon--spin': AppUtils.isAppRefreshing(app) })}/> <span className='show-for-xlarge'>
+                                           Refresh</span></a>
                                     &nbsp;
                                     <a className='argo-button argo-button--base' onClick={(e) => {
                                         e.stopPropagation();

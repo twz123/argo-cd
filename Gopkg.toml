@@ -1,8 +1,7 @@
-# Packages should only be added to the following list when we use them *outside*
-# of our go code. (e.g. we want to build the binary to invoke as part of the
-# build process, such as in `make protogen`). Normal use of golang packages
-# should be added via `dep ensure`, and pinned with a [[constraint]] or
-# [[override]] when version is important.
+# Packages should only be added to the following list when we use them *outside* of our go code.
+# (e.g. we want to build the binary to invoke as part of the build process, such as in
+# generate-proto.sh). Normal use of golang packages should be added via `dep ensure`, and pinned
+# with a [[constraint]] or [[override]] when version is important.
 required = [
   "github.com/golang/protobuf/protoc-gen-go",
   "github.com/gogo/protobuf/protoc-gen-gofast",
@@ -37,16 +36,24 @@ required = [
   name = "github.com/prometheus/client_golang"
   revision = "7858729281ec582767b20e0d696b6041d995d5e0"
 
-[[constraint]]
-  branch = "release-1.12"
+[[override]]
+  branch = "release-1.14"
   name = "k8s.io/api"
 
-[[constraint]]
-  branch = "release-1.12"
+[[override]]
+  branch = "release-1.14"
+  name = "k8s.io/kubernetes"
+
+[[override]]
+  branch = "release-1.14"
   name = "k8s.io/code-generator"
 
-[[constraint]]
-  branch = "release-9.0"
+[[override]]
+  branch = "release-1.14"
+  name = "k8s.io/apimachinery"
+
+[[override]]
+  branch = "release-11.0"
   name = "k8s.io/client-go"
 
 [[constraint]]
@@ -65,6 +72,12 @@ required = [
   branch = "master"
   name = "github.com/yudai/gojsondiff"
 
+[[constraint]]
+  name = "github.com/spf13/cobra"
+  revision = "fe5e611709b0c57fa4a89136deaa8e1d4004d053"
+
+# TODO: move off of k8s.io/kube-openapi and use controller-tools for CRD spec generation
+# (override argoproj/argo contraint on master)
 [[override]]
-  revision = "master"
+  revision = "411b2483e5034420675ebcdd4a55fc76fe5e55cf"
   name = "k8s.io/kube-openapi"

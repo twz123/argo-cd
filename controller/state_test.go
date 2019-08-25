@@ -12,7 +12,7 @@ import (
 
 	"github.com/argoproj/argo-cd/common"
 	argoappv1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
-	"github.com/argoproj/argo-cd/reposerver/repository"
+	"github.com/argoproj/argo-cd/reposerver/apiclient"
 	"github.com/argoproj/argo-cd/test"
 	"github.com/argoproj/argo-cd/util/kube"
 )
@@ -21,7 +21,7 @@ import (
 func TestCompareAppStateEmpty(t *testing.T) {
 	app := newFakeApp()
 	data := fakeData{
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -30,8 +30,7 @@ func TestCompareAppStateEmpty(t *testing.T) {
 		managedLiveObjs: make(map[kube.ResourceKey]*unstructured.Unstructured),
 	}
 	ctrl := newFakeController(&data)
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
 	assert.NotNil(t, compRes)
 	assert.Equal(t, argoappv1.SyncStatusCodeSynced, compRes.syncStatus.Status)
 	assert.Equal(t, 0, len(compRes.resources))
@@ -44,7 +43,7 @@ func TestCompareAppStateMissing(t *testing.T) {
 	app := newFakeApp()
 	data := fakeData{
 		apps: []runtime.Object{app},
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{string(test.PodManifest)},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -53,8 +52,7 @@ func TestCompareAppStateMissing(t *testing.T) {
 		managedLiveObjs: make(map[kube.ResourceKey]*unstructured.Unstructured),
 	}
 	ctrl := newFakeController(&data)
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
 	assert.NotNil(t, compRes)
 	assert.Equal(t, argoappv1.SyncStatusCodeOutOfSync, compRes.syncStatus.Status)
 	assert.Equal(t, 1, len(compRes.resources))
@@ -69,7 +67,7 @@ func TestCompareAppStateExtra(t *testing.T) {
 	app := newFakeApp()
 	key := kube.ResourceKey{Group: "", Kind: "Pod", Namespace: test.FakeDestNamespace, Name: app.Name}
 	data := fakeData{
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -80,8 +78,7 @@ func TestCompareAppStateExtra(t *testing.T) {
 		},
 	}
 	ctrl := newFakeController(&data)
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
 	assert.NotNil(t, compRes)
 	assert.Equal(t, argoappv1.SyncStatusCodeOutOfSync, compRes.syncStatus.Status)
 	assert.Equal(t, 1, len(compRes.resources))
@@ -98,7 +95,7 @@ func TestCompareAppStateHook(t *testing.T) {
 	app := newFakeApp()
 	data := fakeData{
 		apps: []runtime.Object{app},
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{string(podBytes)},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -107,8 +104,7 @@ func TestCompareAppStateHook(t *testing.T) {
 		managedLiveObjs: make(map[kube.ResourceKey]*unstructured.Unstructured),
 	}
 	ctrl := newFakeController(&data)
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
 	assert.NotNil(t, compRes)
 	assert.Equal(t, argoappv1.SyncStatusCodeSynced, compRes.syncStatus.Status)
 	assert.Equal(t, 0, len(compRes.resources))
@@ -124,7 +120,7 @@ func TestCompareAppStateCompareOptionIgnoreExtraneous(t *testing.T) {
 	app := newFakeApp()
 	data := fakeData{
 		apps: []runtime.Object{app},
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -134,9 +130,8 @@ func TestCompareAppStateCompareOptionIgnoreExtraneous(t *testing.T) {
 	}
 	ctrl := newFakeController(&data)
 
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
 
-	assert.NoError(t, err)
 	assert.NotNil(t, compRes)
 	assert.Equal(t, argoappv1.SyncStatusCodeSynced, compRes.syncStatus.Status)
 	assert.Len(t, compRes.resources, 0)
@@ -152,7 +147,7 @@ func TestCompareAppStateExtraHook(t *testing.T) {
 	app := newFakeApp()
 	key := kube.ResourceKey{Group: "", Kind: "Pod", Namespace: test.FakeDestNamespace, Name: app.Name}
 	data := fakeData{
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -163,8 +158,8 @@ func TestCompareAppStateExtraHook(t *testing.T) {
 		},
 	}
 	ctrl := newFakeController(&data)
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
+
 	assert.NotNil(t, compRes)
 	assert.Equal(t, argoappv1.SyncStatusCodeSynced, compRes.syncStatus.Status)
 	assert.Equal(t, 1, len(compRes.resources))
@@ -188,7 +183,7 @@ func TestCompareAppStateDuplicatedNamespacedResources(t *testing.T) {
 
 	app := newFakeApp()
 	data := fakeData{
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{toJSON(t, obj1), toJSON(t, obj2), toJSON(t, obj3)},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -200,8 +195,8 @@ func TestCompareAppStateDuplicatedNamespacedResources(t *testing.T) {
 		},
 	}
 	ctrl := newFakeController(&data)
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
+
 	assert.NotNil(t, compRes)
 	assert.Contains(t, compRes.conditions, argoappv1.ApplicationCondition{
 		Message: "Resource /Pod/fake-dest-ns/my-pod appeared 2 times among application resources.",
@@ -240,7 +235,7 @@ func TestSetHealth(t *testing.T) {
 	})
 	ctrl := newFakeController(&fakeData{
 		apps: []runtime.Object{app, &defaultProj},
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -251,8 +246,7 @@ func TestSetHealth(t *testing.T) {
 		},
 	})
 
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
 
 	assert.Equal(t, compRes.healthStatus.Status, argoappv1.HealthStatusHealthy)
 }
@@ -272,7 +266,7 @@ func TestSetHealthSelfReferencedApp(t *testing.T) {
 	})
 	ctrl := newFakeController(&fakeData{
 		apps: []runtime.Object{app, &defaultProj},
-		manifestResponse: &repository.ManifestResponse{
+		manifestResponse: &apiclient.ManifestResponse{
 			Manifests: []string{},
 			Namespace: test.FakeDestNamespace,
 			Server:    test.FakeClusterURL,
@@ -284,8 +278,108 @@ func TestSetHealthSelfReferencedApp(t *testing.T) {
 		},
 	})
 
-	compRes, err := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false)
-	assert.NoError(t, err)
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
 
 	assert.Equal(t, compRes.healthStatus.Status, argoappv1.HealthStatusHealthy)
+}
+
+func TestSetManagedResourcesWithOrphanedResources(t *testing.T) {
+	proj := defaultProj.DeepCopy()
+	proj.Spec.OrphanedResources = &argoappv1.OrphanedResourcesMonitorSettings{}
+
+	app := newFakeApp()
+	ctrl := newFakeController(&fakeData{
+		apps: []runtime.Object{app, proj},
+		namespacedResources: map[kube.ResourceKey]namespacedResource{
+			kube.NewResourceKey("apps", kube.DeploymentKind, app.Namespace, "guestbook"): {
+				ResourceNode: argoappv1.ResourceNode{
+					ResourceRef: argoappv1.ResourceRef{Kind: kube.DeploymentKind, Name: "guestbook", Namespace: app.Namespace},
+				},
+				AppName: "",
+			},
+		},
+	})
+
+	tree, err := ctrl.setAppManagedResources(app, &comparisonResult{managedResources: make([]managedResource, 0)})
+
+	assert.NoError(t, err)
+	assert.Equal(t, len(tree.OrphanedNodes), 1)
+	assert.Equal(t, "guestbook", tree.OrphanedNodes[0].Name)
+	assert.Equal(t, app.Namespace, tree.OrphanedNodes[0].Namespace)
+}
+
+func TestSetManagedResourcesWithResourcesOfAnotherApp(t *testing.T) {
+	proj := defaultProj.DeepCopy()
+	proj.Spec.OrphanedResources = &argoappv1.OrphanedResourcesMonitorSettings{}
+
+	app1 := newFakeApp()
+	app1.Name = "app1"
+	app2 := newFakeApp()
+	app2.Name = "app2"
+
+	ctrl := newFakeController(&fakeData{
+		apps: []runtime.Object{app1, app2, proj},
+		namespacedResources: map[kube.ResourceKey]namespacedResource{
+			kube.NewResourceKey("apps", kube.DeploymentKind, app2.Namespace, "guestbook"): {
+				ResourceNode: argoappv1.ResourceNode{
+					ResourceRef: argoappv1.ResourceRef{Kind: kube.DeploymentKind, Name: "guestbook", Namespace: app2.Namespace},
+				},
+				AppName: "app2",
+			},
+		},
+	})
+
+	tree, err := ctrl.setAppManagedResources(app1, &comparisonResult{managedResources: make([]managedResource, 0)})
+
+	assert.NoError(t, err)
+	assert.Equal(t, len(tree.OrphanedNodes), 0)
+}
+
+func TestReturnUnknownComparisonStateOnSettingLoadError(t *testing.T) {
+	proj := defaultProj.DeepCopy()
+	proj.Spec.OrphanedResources = &argoappv1.OrphanedResourcesMonitorSettings{}
+
+	app := newFakeApp()
+
+	ctrl := newFakeController(&fakeData{
+		apps: []runtime.Object{app, proj},
+		configMapData: map[string]string{
+			"resource.customizations": "invalid setting",
+		},
+	})
+
+	compRes := ctrl.appStateManager.CompareAppState(app, "", app.Spec.Source, false, nil)
+
+	assert.Equal(t, argoappv1.HealthStatusUnknown, compRes.healthStatus.Status)
+	assert.Equal(t, argoappv1.SyncStatusCodeUnknown, compRes.syncStatus.Status)
+	assert.NotNil(t, compRes.reconciledAt)
+}
+
+func TestSetManagedResourcesKnownOrphanedResourceExceptions(t *testing.T) {
+	proj := defaultProj.DeepCopy()
+	proj.Spec.OrphanedResources = &argoappv1.OrphanedResourcesMonitorSettings{}
+
+	app := newFakeApp()
+	app.Namespace = "default"
+
+	ctrl := newFakeController(&fakeData{
+		apps: []runtime.Object{app, proj},
+		namespacedResources: map[kube.ResourceKey]namespacedResource{
+			kube.NewResourceKey("apps", kube.DeploymentKind, app.Namespace, "guestbook"): {
+				ResourceNode: argoappv1.ResourceNode{ResourceRef: argoappv1.ResourceRef{Group: "apps", Kind: kube.DeploymentKind, Name: "guestbook", Namespace: app.Namespace}},
+			},
+			kube.NewResourceKey("", kube.ServiceAccountKind, app.Namespace, "default"): {
+				ResourceNode: argoappv1.ResourceNode{ResourceRef: argoappv1.ResourceRef{Kind: kube.ServiceAccountKind, Name: "default", Namespace: app.Namespace}},
+			},
+			kube.NewResourceKey("", kube.ServiceKind, app.Namespace, "kubernetes"): {
+				ResourceNode: argoappv1.ResourceNode{ResourceRef: argoappv1.ResourceRef{Kind: kube.ServiceAccountKind, Name: "kubernetes", Namespace: app.Namespace}},
+			},
+		},
+	})
+
+	tree, err := ctrl.setAppManagedResources(app, &comparisonResult{managedResources: make([]managedResource, 0)})
+
+	assert.NoError(t, err)
+	assert.Len(t, tree.OrphanedNodes, 1)
+	assert.Equal(t, "guestbook", tree.OrphanedNodes[0].Name)
 }

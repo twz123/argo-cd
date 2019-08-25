@@ -1,4 +1,4 @@
-import { models } from 'argo-ui';
+import {models} from 'argo-ui';
 
 interface ItemsList<T> {
     /**
@@ -18,6 +18,11 @@ interface ItemsList<T> {
 export interface ApplicationList extends ItemsList<Application> { }
 
 export interface SyncOperationResource { group: string; kind: string; name: string; }
+
+export interface SyncStrategy {
+    apply: { force?: boolean } | null;
+    hook: { force?: boolean } | null;
+}
 
 export interface SyncOperation {
     revision: string;
@@ -59,10 +64,18 @@ export interface OperationState {
     finishedAt: models.Time;
 }
 
-export type HookType = 'PreSync' | 'Sync' | 'PostSync' | 'Skip';
+export type HookType = 'PreSync' | 'Sync' | 'PostSync' | 'SyncFail' | 'Skip';
+
+export interface RevisionMetadata {
+    author: string;
+    date: models.Time;
+    tags: string[];
+    message: string;
+}
 
 export interface SyncOperationResult {
     resources: ResourceResult[];
+    revision: string;
 }
 
 export type ResultCode = 'Synced' | 'SyncFailed' | 'Pruned' | 'PruneSkipped';
@@ -133,12 +146,6 @@ export interface ApplicationSource {
      */
     path: string;
 
-    /**
-     * DEPRECATED.
-     * Overridden component parameters.
-     */
-    componentParameterOverrides?: ComponentParameter[];
-
     helm?: ApplicationSourceHelm;
 
     kustomize?: ApplicationSourceKustomize;
@@ -150,12 +157,12 @@ export interface ApplicationSource {
 
 export interface ApplicationSourceHelm {
     valueFiles: string[];
+    values?: string;
     parameters: HelmParameter[];
 }
 
 export interface ApplicationSourceKustomize {
     namePrefix: string;
-    imageTags: KustomizeImageTag[];
     images: string[];
 }
 
@@ -169,7 +176,12 @@ export interface ApplicationSourceDirectory {
 }
 
 export interface SyncPolicy {
-    automated?: { prune: boolean };
+    automated?: { prune: boolean;  selfHeal: boolean;  };
+}
+
+export interface Info {
+    name: string;
+    value: string;
 }
 
 export interface ApplicationSpec {
@@ -177,6 +189,7 @@ export interface ApplicationSpec {
     source: ApplicationSource;
     destination: ApplicationDestination;
     syncPolicy?: SyncPolicy;
+    info?: Info[];
 }
 
 /**
@@ -224,6 +237,7 @@ export interface ResourceStatus {
     status: SyncStatusCode;
     health: HealthStatus;
     hook?: boolean;
+    requiresPruning?: boolean;
 }
 
 export interface ResourceRef {
@@ -258,6 +272,7 @@ export interface ResourceNode extends ResourceRef {
 
 export interface ApplicationTree {
     nodes: ResourceNode[];
+    orphanedNodes: ResourceNode[];
 }
 
 export interface ResourceDiff {
@@ -304,6 +319,11 @@ export interface LogEntry {
 
 export interface AuthSettings {
     url: string;
+    statusBadgeEnabled: boolean;
+    googleAnalytics: {
+        trackingID: string;
+        anonymizeUsers: boolean;
+    };
     dexConfig: {
         connectors: {
             name: string;
@@ -312,6 +332,10 @@ export interface AuthSettings {
     };
     oidcConfig: {
         name: string;
+    };
+    help: {
+        chatUrl: string;
+        chatText: string;
     };
 }
 
@@ -328,6 +352,16 @@ export interface ConnectionState {
     message: string;
     attemptedAt: models.Time;
 }
+
+export interface RepoCert {
+    serverName: string;
+    certType: string;
+    certSubType: string;
+    certData: string;
+    certInfo: string;
+}
+
+export interface RepoCertList extends ItemsList<RepoCert> { }
 
 export interface Repository {
     repo: string;
@@ -388,17 +422,12 @@ export interface HelmAppSpec {
     name: string;
     path: string;
     valueFiles: string[];
+    values?: string;
     parameters: HelmParameter[];
-}
-
-export interface KustomizeImageTag {
-    name: string;
-    value: string;
 }
 
 export interface KustomizeAppSpec {
     path: string;
-    imageTags?: KustomizeImageTag[];
     images?: string[];
 }
 
@@ -470,6 +499,7 @@ export interface ProjectSpec {
     roles: ProjectRole[];
     clusterResourceWhitelist: GroupKind[];
     namespaceResourceBlacklist: GroupKind[];
+    orphanedResources?: { warn?: boolean };
 }
 
 export interface Project {

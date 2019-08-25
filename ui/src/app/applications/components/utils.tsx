@@ -1,10 +1,11 @@
 import * as React from 'react';
 
-import { Checkbox, NotificationsApi, NotificationType } from 'argo-ui';
-import { COLORS, ErrorNotification } from '../../shared/components';
-import { ContextApis } from '../../shared/context';
+import {Checkbox, NotificationsApi, NotificationType} from 'argo-ui';
+import {COLORS, ErrorNotification} from '../../shared/components';
+import {Revision} from '../../shared/components/revision';
+import {ContextApis} from '../../shared/context';
 import * as appModels from '../../shared/models';
-import { services } from '../../shared/services';
+import {services} from '../../shared/services';
 
 export const ICON_CLASS_BY_KIND = {
     application: 'argo-icon-application',
@@ -19,6 +20,7 @@ export interface NodeId {
     name: string;
     group: string;
 }
+
 export function nodeKey(node: NodeId) {
     return [node.group, node.kind, node.namespace, node.name].join('/');
 }
@@ -29,19 +31,22 @@ export function isSameNode(first: NodeId, second: NodeId) {
 
 export async function deleteApplication(appName: string, apis: ContextApis): Promise<boolean> {
     let cascade = false;
-    const confirmationForm = class extends React.Component<{}, { cascade: boolean } > {
+    const confirmationForm = class extends React.Component<{}, { cascade: boolean }> {
         constructor(props: any) {
             super(props);
             this.state = {cascade: true};
         }
+
         public render() {
             return (
                 <div>
                     <p>Are you sure you want to delete the application "{appName}"?</p>
-                    <p><Checkbox checked={this.state.cascade} onChange={(val) => this.setState({ cascade: val })} /> Cascade</p>
+                    <p><Checkbox checked={this.state.cascade}
+                                 onChange={(val) => this.setState({cascade: val})}/> Cascade</p>
                 </div>
             );
         }
+
         public componentWillUnmount() {
             cascade = this.state.cascade;
         }
@@ -96,12 +101,13 @@ export const OperationPhaseIcon = ({phase}: { phase: appModels.OperationPhase })
             color = COLORS.operation.running;
             break;
     }
-    return <i title={phase} className={className} style={{ color }} />;
+    return <i title={phase} className={className} style={{color}}/>;
 };
 
-export const ComparisonStatusIcon = ({status}: { status: appModels.SyncStatusCode }) => {
+export const ComparisonStatusIcon = ({status, resource, label}: { status: appModels.SyncStatusCode, resource?: { requiresPruning?: boolean }, label?: boolean }) => {
     let className = 'fa fa-question-circle';
     let color = COLORS.sync.unknown;
+    let title: string = status;
 
     switch (status) {
         case appModels.SyncStatuses.Synced:
@@ -109,33 +115,39 @@ export const ComparisonStatusIcon = ({status}: { status: appModels.SyncStatusCod
             color = COLORS.sync.synced;
             break;
         case appModels.SyncStatuses.OutOfSync:
-            className = 'fa fa-times';
+            const requiresPruning = resource && resource.requiresPruning;
+            className = requiresPruning ? 'fa fa-times-circle' : 'fa fa-times';
+            if (requiresPruning) {
+                title = `${title} (requires pruning)`;
+            }
             color = COLORS.sync.out_of_sync;
             break;
         case appModels.SyncStatuses.Unknown:
             className = 'fa fa-circle-notch fa-spin';
             break;
     }
-    return <i title={status} className={className} style={{ color }} />;
+    return <React.Fragment><i title={title} className={className} style={{color}}/> {label && title}</React.Fragment>;
 };
 
 export function syncStatusMessage(app: appModels.Application) {
-    let message = '';
     let rev = app.spec.source.targetRevision || 'HEAD';
-    if (app.status.sync.revision.length >= 7 && !app.status.sync.revision.startsWith(app.spec.source.targetRevision)) {
+    if (app.status.sync.revision && (app.status.sync.revision.length >= 7 && !app.status.sync.revision.startsWith(app.spec.source.targetRevision))) {
         rev += ' (' + app.status.sync.revision.substr(0, 7) + ')';
     }
     switch (app.status.sync.status) {
         case appModels.SyncStatuses.Synced:
-            message += ' to ' + rev;
-            break;
+            return (
+                <span>To <Revision repoUrl={app.spec.source.repoURL}
+                                   revision={app.spec.source.targetRevision || 'HEAD'}>{rev}</Revision> </span>
+            );
         case appModels.SyncStatuses.OutOfSync:
-            message += ' from ' + rev;
-            break;
-        case appModels.SyncStatuses.Unknown:
-            break;
+            return (
+                <span>From <Revision repoUrl={app.spec.source.repoURL}
+                                     revision={app.spec.source.targetRevision || 'HEAD'}>{rev}</Revision> </span>
+            );
+        default:
+            return <span>{rev}</span>;
     }
-    return message;
 }
 
 export const HealthStatusIcon = ({state}: { state: appModels.HealthStatus }) => {
@@ -164,14 +176,14 @@ export const HealthStatusIcon = ({state}: { state: appModels.HealthStatus }) => 
     if (state.message) {
         title = `${state.status}: ${state.message};`;
     }
-    return <i title={title} className={'fa ' + icon} style={{ color }} />;
+    return <i title={title} className={'fa ' + icon} style={{color}}/>;
 };
 
 export const ResourceResultIcon = ({resource}: { resource: appModels.ResourceResult }) => {
     let color = COLORS.sync_result.unknown;
     let icon = 'fa-question-circle';
 
-    if (resource.status) {
+    if (!resource.hookType && resource.status) {
         switch (resource.status) {
             case appModels.ResultCodes.Synced:
                 color = COLORS.sync_result.synced;
@@ -193,9 +205,9 @@ export const ResourceResultIcon = ({resource}: { resource: appModels.ResourceRes
         if (resource.message) {
             title = `${resource.status}: ${resource.message};`;
         }
-        return <i title={title} className={'fa ' + icon} style={{ color }} />;
+        return <i title={title} className={'fa ' + icon} style={{color}}/>;
     }
-    if (resource.hookPhase) {
+    if (resource.hookType && resource.hookPhase) {
         let className = '';
         switch (resource.hookPhase) {
             case appModels.OperationPhases.Running:
@@ -223,7 +235,7 @@ export const ResourceResultIcon = ({resource}: { resource: appModels.ResourceRes
         if (resource.message) {
             title = `${resource.hookPhase}: ${resource.message};`;
         }
-        return <i title={title} className={className} style={{ color }} />;
+        return <i title={title} className={className} style={{color}}/>;
     }
     return null;
 };
@@ -275,7 +287,7 @@ export function getPodStateReason(pod: appModels.State): { message: string; reas
             if (container.state.waiting && container.state.waiting.reason) {
                 reason = container.state.waiting.reason;
                 message = container.state.waiting.message;
-            } else if (container.state.terminated && container.state.terminated.reason ) {
+            } else if (container.state.terminated && container.state.terminated.reason) {
                 reason = container.state.terminated.reason;
                 message = container.state.terminated.message;
             } else if (container.state.terminated && container.state.terminated.reason) {
@@ -327,9 +339,6 @@ export function getAppOverridesCount(app: appModels.Application) {
     if (app.spec.source.ksonnet && app.spec.source.ksonnet.parameters) {
         return app.spec.source.ksonnet.parameters.length;
     }
-    if (app.spec.source.kustomize && app.spec.source.kustomize.imageTags) {
-        return app.spec.source.kustomize.imageTags.length;
-    }
     if (app.spec.source.kustomize && app.spec.source.kustomize.images) {
         return app.spec.source.kustomize.images.length;
     }
@@ -337,4 +346,12 @@ export function getAppOverridesCount(app: appModels.Application) {
         return app.spec.source.helm.parameters.length;
     }
     return 0;
+}
+
+export function isAppRefreshing(app: appModels.Application) {
+    return !!(app.metadata.annotations && app.metadata.annotations[appModels.AnnotationRefreshKey]);
+}
+
+export function refreshLinkAttrs(app: appModels.Application) {
+    return { disabled: isAppRefreshing(app) };
 }

@@ -19,6 +19,14 @@ spec:
 
     # helm specific config
     helm:
+      # Extra parameters to set (same as setting through values.yaml, but these take precedence)
+      parameters:
+      - name: "nginx-ingress.controller.service.annotations.external-dns\\.alpha\\.kubernetes\\.io/hostname"
+        value: mydomain.example.com
+
+      # Release name override (defaults to application name)
+      releaseName: guestbook
+
       valueFiles:
       - values-prod.yaml
 
@@ -26,36 +34,35 @@ spec:
     kustomize:
       # Optional image name prefix
       namePrefix: prod-
-      # Optional image tags passed to "kustomize edit set imagetag" is Kustomize 1 only.
-      imageTags:
-      - name: gcr.io/heptio-images/ks-guestbook-demo
-        value: "0.2"
-      # Optional images passed to "kustomize edit set image" is Kustomize 2 only.
+      # Optional images passed to "kustomize edit set image".
       images:
       - gcr.io/heptio-images/ks-guestbook-demo:0.2
 
     # directory
     directory:
       recurse: true
-
-    jsonnet:
-      # A list of Jsonnet External Variables
-      extVars:
-      - name: foo
-        value: bar
-        # You can use "code to determine if the value is either string (false, the default) or Jsonnet code (if code is true).
-      - code: true
-        name: baz
-        value: "true"
-      # A list of Jsonnet Top-level Arguments
-      tlas:
-      - code: false
-        name: foo
-        value: bar
+      jsonnet:
+        # A list of Jsonnet External Variables
+        extVars:
+        - name: foo
+          value: bar
+          # You can use "code to determine if the value is either string (false, the default) or Jsonnet code (if code is true).
+        - code: true
+          name: baz
+          value: "true"
+        # A list of Jsonnet Top-level Arguments
+        tlas:
+        - code: false
+          name: foo
+          value: bar
 
     # plugin specific config
     plugin:
-    - name: mypluginname
+      name: mypluginname
+      # environment variables passed to the plugin
+      env:
+        - name: FOO
+          value: bar
 
   # Destination cluster and namespace to deploy the application
   destination:
@@ -65,7 +72,8 @@ spec:
   # Sync policy
   syncPolicy:
     automated:
-      prune: true
+      prune: true # Specifies if resources should be pruned during auto-syncing ( false by default ).
+      selfHeal: true # Specifies if partial app sync should be executed when resources are changed only in target Kubernetes cluster and no git change detected ( false by default ).
 
   # Ignore differences at the specified json pointers
   ignoreDifferences:
