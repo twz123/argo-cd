@@ -19,7 +19,7 @@ VENDOR_DIR:=$(shell if [ -f /.dockerenv ]; then echo "$$GOPATH/src"; else echo '
 
 # docker image publishing options
 DOCKER_PUSH?=false
-IMAGE_TAG?=
+IMAGE_TAG?=latest
 # perform static compilation
 STATIC_BUILD?=true
 # build development images
@@ -145,7 +145,7 @@ ifeq ($(DEV_IMAGE), true)
 # (instead of in Docker) which speeds up builds. Dockerfile.dev needs to be
 # copied into dist to perform the build, since the dist directory is under
 # .dockerignore.
-image: packr
+image: | dist/packr
 	docker build -t argocd-base --target argocd-base .
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-server ./cmd/argocd-server
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dist/packr build -v -ldflags '${LDFLAGS}' -o ${DIST_DIR}/argocd-application-controller ./cmd/argocd-application-controller
@@ -165,6 +165,9 @@ endif
 builder-image:
 	docker build -t $(IMAGE_PREFIX)argo-cd-ci-builder:$(IMAGE_TAG) --target builder .
 	@if [ "$(DOCKER_PUSH)" = "true" ] ; then docker push $(IMAGE_PREFIX)argo-cd-ci-builder:$(IMAGE_TAG) ; fi
+
+vendor: Gopkg.toml Gopkg.lock | dist/dep
+	dist/dep ensure -vendor-only
 
 .PHONY: dep-ensure
 dep-ensure: dist/dep
@@ -319,7 +322,7 @@ dist/jq:
 		'$@' --version; \
 	} || { rm -f -- '$@' && exit 1; }
 
-dist/packr:
+dist/packr: vendor
 	@echo Building $(@F)...
 	go build -o $@ ./vendor/github.com/gobuffalo/packr/$(@F)
 
