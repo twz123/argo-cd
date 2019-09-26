@@ -72,8 +72,8 @@ func (c *Context) HTTPSRepoURLWithClientCertAdded() *Context {
 	return c
 }
 
-func (c *Context) SSHRepoURLAdded() *Context {
-	repos.AddSSHRepo(false)
+func (c *Context) SSHRepoURLAdded(fetchRefspecs ...string) *Context {
+	repos.AddSSHRepo(false, fetchRefspecs...)
 	return c
 }
 

@@ -159,6 +159,7 @@ func (db *db) UpdateRepository(ctx context.Context, r *appsv1.Repository) (*apps
 	repoInfo.InsecureIgnoreHostKey = r.IsInsecure()
 	repoInfo.Insecure = r.IsInsecure()
 	repoInfo.EnableLFS = r.EnableLFS
+
 	repoInfo.FetchRefspecs = r.FetchRefspecs
 
 	repos[index] = repoInfo
