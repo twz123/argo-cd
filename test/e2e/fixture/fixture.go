@@ -362,7 +362,31 @@ func EnsureCleanState(t *testing.T) {
 	FailOnErr(Run(repoDirectory(), "chmod", "777", "."))
 	FailOnErr(Run(repoDirectory(), "git", "init"))
 	FailOnErr(Run(repoDirectory(), "git", "add", "."))
+
+	pathsByRef := make(map[string][]string)
+	CheckError(filepath.Walk("testdata", func(path string, info os.FileInfo, err error) error {
+		if err != nil || !info.IsDir() {
+			return err
+		}
+		parts := strings.SplitN(info.Name(), "@", 2)
+		if len(parts) == 2 && parts[0] != "" && strings.HasPrefix(parts[1], "refs~") {
+			FailOnErr(Run(repoDirectory(), "git", "rm", "--cached", "-r", info.Name()))
+			ref := strings.ReplaceAll(parts[1], "~", "/")
+			pathsByRef[ref] = append(pathsByRef[ref], parts[0])
+		}
+		return filepath.SkipDir
+	}))
+
 	FailOnErr(Run(repoDirectory(), "git", "commit", "-q", "-m", "initial commit"))
+	for ref, paths := range pathsByRef {
+		FailOnErr(Run(repoDirectory(), "git", "checkout", "--orphan", "create-ref"))
+		FailOnErr(Run(repoDirectory(), "git", "rm", "--cached", "-r", "."))
+		FailOnErr(Run(repoDirectory(), "git", append([]string{"add"}, paths...)...))
+		FailOnErr(Run(repoDirectory(), "git", "commit", "-q", "-m", "commit "+ref))
+		CheckError(os.MkdirAll(repoDirectory()+"/.git/"+ref[:strings.LastIndex(ref, "/")], os.ModePerm))
+		FailOnErr(Run(repoDirectory(), "git", "checkout", "master"))
+		FailOnErr(Run(repoDirectory(), "mv", ".git/refs/heads/create-ref", ".git/"+ref))
+	}
 
 	// create namespace
 	FailOnErr(Run("", "kubectl", "create", "ns", DeploymentNamespace()))
