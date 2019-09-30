@@ -73,7 +73,7 @@ func (c *Context) HTTPSRepoURLWithClientCertAdded() *Context {
 }
 
 func (c *Context) SSHRepoURLAdded(fetchRefspecs ...string) *Context {
-	repos.AddSSHRepo(false, fetchRefspecs...)
+	repos.AddSSHRepo(true, fetchRefspecs...)
 	return c
 }
 
