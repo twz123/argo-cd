@@ -16,9 +16,10 @@ func TestSyncFromGitRefspecs(t *testing.T) {
 		Path("hidden-gem").
 		Revision("hidden-gem").
 		When().
+		IgnoreErrors().
 		Create().
 		Then().
-		Expect(Error("x", "y")).
+		Expect(Error("", "Unable to resolve 'hidden-gem' to a commit SHA")).
 		Given().
 		SSHRepoURLAdded("+refs/heads/master:refs/remotes/origin/master", "+refs/hidden/gem:refs/remotes/origin/hidden-gem").
 		When().
