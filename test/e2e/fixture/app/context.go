@@ -35,6 +35,7 @@ type Context struct {
 	project                string
 	revision               string
 	force                  bool
+	upsert                 bool
 }
 
 func Given(t *testing.T) *Context {
@@ -73,12 +74,12 @@ func (c *Context) HTTPSRepoURLWithClientCertAdded() *Context {
 }
 
 func (c *Context) SSHRepoURLAdded(fetchRefspecs ...string) *Context {
-	repos.AddSSHRepo(true, fetchRefspecs...)
+	repos.AddSSHRepo(true, c.upsert, fetchRefspecs...)
 	return c
 }
 
 func (c *Context) SSHInsecureRepoURLAdded() *Context {
-	repos.AddSSHRepo(true)
+	repos.AddSSHRepo(true, c.upsert)
 	return c
 }
 
@@ -203,5 +204,10 @@ func (c *Context) Project(project string) *Context {
 
 func (c *Context) Force() *Context {
 	c.force = true
+	return c
+}
+
+func (c *Context) Upsert() *Context {
+	c.upsert = true
 	return c
 }

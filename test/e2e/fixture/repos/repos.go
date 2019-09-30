@@ -8,7 +8,7 @@ import (
 )
 
 // sets the current repo as the default SSH test repo
-func AddSSHRepo(insecure bool, fetchRefspecs ...string) {
+func AddSSHRepo(insecure, upsert bool, fetchRefspecs ...string) {
 	keyPath, err := filepath.Abs("../fixture/testrepos/id_rsa")
 	errors.CheckError(err)
 	args := []string{"repo", "add", fixture.RepoURL(fixture.RepoURLTypeSSH), "--ssh-private-key-path", keyPath}
@@ -17,6 +17,9 @@ func AddSSHRepo(insecure bool, fetchRefspecs ...string) {
 	}
 	for _, refspec := range fetchRefspecs {
 		args = append(args, "--fetch-refspec", refspec)
+	}
+	if upsert {
+		args = append(args, "--upsert")
 	}
 
 	errors.FailOnErr(fixture.RunCli(args...))
